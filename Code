@@ -1,0 +1,46 @@
+function writeSectionC_(spreadsheet, components) {
+  var mapping = SHEET_TEMPLATE_MAPPING.sectionC;
+
+  assertRowCapacity_(components.length, mapping, 'C');
+
+  if (!components.length) {
+    return;
+  }
+
+  var sheet = getMappedSheet_(
+    spreadsheet,
+    mapping.sheet,
+    'sectionC.sheet'
+  );
+
+  // Only the component name is written.
+  writeColumnValues_(
+    sheet,
+    mapping.startRow,
+    mapping.columns.name,
+    components.map(function(item) {
+      return asSafeSheetText_(item.name);
+    }),
+    'sectionC.columns.name'
+  );
+
+  // Write C1–C15.
+  FORM_SCHEMA.sectionC.characteristics.forEach(
+    function(characteristic) {
+      writeColumnValues_(
+        sheet,
+        mapping.startRow,
+        mapping.columns.characteristics[
+          characteristic.id
+        ],
+        components.map(function(item) {
+          return asSafeSheetValue_(
+            item.characteristics[characteristic.id]
+          );
+        }),
+        'sectionC.columns.characteristics.' +
+          characteristic.id
+      );
+    }
+  );
+}
