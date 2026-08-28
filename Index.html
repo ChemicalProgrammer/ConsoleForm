@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <?!= include('Styles'); ?>
+  </head>
+  <body>
+    <div id="busy-overlay" class="busy-overlay" aria-live="polite">
+      <div class="loader-card">
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="busy-message">Loading console…</p>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">CC</div>
+        <div>
+          <h1 id="app-name">Case Console</h1>
+          <p>Cases, input data, and reports</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="current-user" class="user-chip"></span>
+        <button id="settings-button" class="icon-button" type="button" aria-label="Open settings" title="Settings">
+          <span aria-hidden="true">⚙</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <div id="settings-warning" class="notice notice-warning hidden" role="alert">
+        <div>
+          <strong>Application setup is incomplete.</strong>
+          <span id="settings-warning-text">Save the shared destination folder and template before creating a case.</span>
+        </div>
+        <button id="warning-settings-button" class="text-button" type="button">Open settings</button>
+      </div>
+
+      <section id="dashboard-view">
+        <section class="card dashboard-hero">
+          <div>
+            <div class="section-kicker">Workspace</div>
+            <h2>Cases</h2>
+            <p>Open an existing case, create a new one, or recover a case that was moved to trash.</p>
+          </div>
+          <button id="new-case-button" class="primary-button large-button" type="button">
+            <span aria-hidden="true">＋</span> New case
+          </button>
+        </section>
+
+        <section class="card dashboard-toolbar">
+          <label class="search-control" for="case-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="case-search" type="search" placeholder="Search cases" autocomplete="off">
+          </label>
+          <select id="status-filter" class="select-input compact-select" aria-label="Filter cases by status">
+            <option value="ACTIVE">Active cases</option>
+            <option value="TRASHED">Trash</option>
+            <option value="ALL">All cases</option>
+          </select>
+          <button id="refresh-cases-button" class="secondary-button" type="button">Refresh</button>
+          <button id="import-cases-button" class="secondary-button" type="button">Import existing cases</button>
+        </section>
+
+        <section id="case-list-card" class="card case-list-card">
+          <div class="case-table-shell">
+            <table class="case-table">
+              <thead>
+                <tr>
+                  <th>Case name</th>
+                  <th>Status</th>
+                  <th>Last modified</th>
+                  <th>Modified by</th>
+                  <th><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="case-table-body"></tbody>
+            </table>
+          </div>
+          <div id="case-list-empty" class="empty-state hidden">
+            <div class="empty-icon" aria-hidden="true">▦</div>
+            <strong id="case-empty-title">No cases found</strong>
+            <p id="case-empty-message">Create the first case or import folders made with the previous version.</p>
+          </div>
+        </section>
+      </section>
+
+      <section id="workspace-view" class="hidden">
+        <section class="card workspace-header">
+          <div class="workspace-title-row">
+            <button id="back-to-cases-button" class="back-button" type="button" aria-label="Back to cases">←</button>
+            <div>
+              <div id="workspace-kicker" class="section-kicker">Case workspace</div>
+              <h2 id="workspace-title">New case</h2>
+              <p id="workspace-meta">Complete the available information and save when ready.</p>
+            </div>
+          </div>
+          <div id="workspace-actions" class="workspace-actions hidden">
+            <button id="reload-case-button" class="secondary-button" type="button">Reload from Sheet</button>
+            <a id="workspace-sheet-link" class="secondary-button link-button" href="#" target="_blank">Open Sheet</a>
+            <a id="workspace-folder-link" class="secondary-button link-button" href="#" target="_blank">Open folder</a>
+            <button id="rename-case-button" class="secondary-button" type="button">Rename</button>
+            <button id="trash-case-button" class="danger-button" type="button">Move to trash</button>
+          </div>
+        </section>
+
+        <nav class="workspace-tabs" aria-label="Case workspace sections">
+          <button class="workspace-tab active" data-workspace-tab="input" type="button">
+            <span aria-hidden="true">✎</span> Input Data
+          </button>
+          <button class="workspace-tab" data-workspace-tab="output" type="button">
+            <span aria-hidden="true">▤</span> Output Data
+          </button>
+        </nav>
+
+        <section id="input-data-view">
+          <form id="case-form" novalidate>
+            <section class="card case-card">
+              <div class="section-kicker">Case identification</div>
+              <label class="field-label" for="case-name">Case name <span class="required-mark">*</span></label>
+              <input
+                id="case-name"
+                name="caseName"
+                class="text-input case-name-input"
+                type="text"
+                maxlength="120"
+                autocomplete="off"
+                placeholder="Example: Case 2026-001"
+              >
+              <p class="field-help">This is the only required field. Changing it in an existing case also renames its folder and spreadsheet.</p>
+            </section>
+
+            <nav class="step-tabs" aria-label="Input Data sections">
+              <button class="step-tab active" data-section="0" type="button">
+                <span class="step-letter">A</span><span>Information</span>
+              </button>
+              <button class="step-tab" data-section="1" type="button">
+                <span class="step-letter">B</span><span>Components</span>
+              </button>
+              <button class="step-tab" data-section="2" type="button">
+                <span class="step-letter">C</span><span>Characteristics</span>
+              </button>
+              <button class="step-tab" data-section="3" type="button">
+                <span class="step-letter">D</span><span>Parameters</span>
+              </button>
+            </nav>
+
+            <section class="card form-panel active" data-panel="0">
+              <div class="section-heading">
+                <div>
+                  <div class="section-kicker">Section A</div>
+                  <h2 id="section-a-title">General information</h2>
+                  <p id="section-a-description"></p>
+                </div>
+              </div>
+              <div id="section-a-fields" class="field-grid"></div>
+            </section>
+
+            <section class="card form-panel" data-panel="1">
+              <div class="section-heading heading-with-action">
+                <div>
+                  <div class="section-kicker">Section B</div>
+                  <h2 id="section-b-title">Components</h2>
+                  <p id="section-b-description"></p>
+                </div>
+                <button id="add-component-button" class="secondary-button" type="button">
+                  <span aria-hidden="true">＋</span> Add component
+                </button>
+              </div>
+              <div class="component-table-head" aria-hidden="true">
+                <span>Code</span><span>Name</span><span>Percentage</span><span></span>
+              </div>
+              <div id="component-rows" class="component-rows"></div>
+              <div class="percentage-summary">
+                <div>
+                  <span class="summary-label">Component total</span>
+                  <strong id="percentage-total">0%</strong>
+                </div>
+                <div class="progress-track" aria-hidden="true">
+                  <div id="percentage-bar" class="progress-bar"></div>
+                </div>
+                <p id="percentage-message">Components and percentages are optional.</p>
+              </div>
+            </section>
+
+            <section class="card form-panel" data-panel="2">
+              <div class="section-heading">
+                <div>
+                  <div class="section-kicker">Section C</div>
+                  <h2 id="section-c-title">Component characteristics</h2>
+                  <p id="section-c-description"></p>
+                </div>
+              </div>
+              <div id="section-c-empty" class="empty-state">
+                <div class="empty-icon" aria-hidden="true">◫</div>
+                <strong>No components selected</strong>
+                <p>Select components in Section B to view their 15 characteristics.</p>
+              </div>
+              <div id="characteristic-table-container" class="characteristic-table-shell hidden">
+                <table id="characteristic-table" class="characteristic-table">
+                  <thead id="characteristic-table-head"></thead>
+                  <tbody id="characteristic-table-body"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="card form-panel" data-panel="3">
+              <div class="section-heading">
+                <div>
+                  <div class="section-kicker">Section D</div>
+                  <h2 id="section-d-title">Parameters and limits</h2>
+                  <p id="section-d-description"></p>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table class="parameter-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Unit</th>
+                      <th>Min</th>
+                      <th>Target</th>
+                      <th>Max</th>
+                    </tr>
+                  </thead>
+                  <tbody id="section-d-fields"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <div class="form-actions">
+              <button id="previous-button" class="secondary-button hidden" type="button">Previous</button>
+              <div class="action-spacer"></div>
+              <span id="save-status" class="save-status"></span>
+              <button id="next-button" class="primary-button" type="button">Next</button>
+              <button id="submit-button" class="primary-button hidden" type="submit">Create case</button>
+            </div>
+          </form>
+        </section>
+
+        <section id="output-data-view" class="hidden">
+          <section class="card output-card">
+            <div class="section-kicker">Output Data</div>
+            <div class="empty-state output-empty-state">
+              <div class="empty-icon output-icon" aria-hidden="true">▤</div>
+              <strong>No reports have been generated for this case.</strong>
+              <p>This area is ready for future report generators. Input Data and generated outputs will remain separate.</p>
+              <button class="secondary-button" type="button" disabled>Generate report</button>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <div class="section-kicker">Shared configuration</div>
+            <h2 id="settings-title">Settings</h2>
+          </div>
+          <button id="close-settings-button" class="icon-button small" type="button" aria-label="Close">×</button>
+        </div>
+        <p class="modal-intro">These IDs are shared by every user of this web app. Paste a complete Drive link or only the ID.</p>
+        <div class="modal-fields">
+          <div class="field-group full-width">
+            <label class="field-label" for="destination-folder">Destination folder <span class="required-mark">*</span></label>
+            <input id="destination-folder" class="text-input" type="text" autocomplete="off" placeholder="https://drive.google.com/drive/folders/…">
+            <p class="field-help">All case folders will be created here.</p>
+          </div>
+          <div class="field-group full-width">
+            <label class="field-label" for="template-spreadsheet">Google Sheets template <span class="required-mark">*</span></label>
+            <input id="template-spreadsheet" class="text-input" type="text" autocomplete="off" placeholder="https://docs.google.com/spreadsheets/d/…">
+            <p class="field-help">A copy will be placed inside folder 01 of every case.</p>
+          </div>
+          <div class="field-group full-width">
+            <label class="field-label" for="registry-spreadsheet">Case Registry spreadsheet</label>
+            <input id="registry-spreadsheet" class="text-input" type="text" autocomplete="off" placeholder="Leave blank to create it automatically">
+            <p class="field-help">Leave blank on the first setup. The console will create a registry in the destination folder.</p>
+          </div>
+        </div>
+        <div id="settings-feedback" class="inline-feedback hidden"></div>
+        <div class="modal-actions">
+          <button id="cancel-settings-button" class="secondary-button" type="button">Cancel</button>
+          <button id="save-settings-button" class="primary-button" type="button">Validate and save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rename-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+      <div class="modal-card compact-modal">
+        <div class="modal-header">
+          <div>
+            <div class="section-kicker">Case action</div>
+            <h2 id="rename-title">Rename case</h2>
+          </div>
+          <button id="close-rename-button" class="icon-button small" type="button" aria-label="Close">×</button>
+        </div>
+        <p class="modal-intro">The case folder, copied spreadsheet, registry, and mapped case-name cell will be updated together.</p>
+        <label class="field-label" for="rename-case-input">New case name <span class="required-mark">*</span></label>
+        <input id="rename-case-input" class="text-input" type="text" maxlength="120" autocomplete="off">
+        <div id="rename-feedback" class="inline-feedback hidden"></div>
+        <div class="modal-actions">
+          <button id="cancel-rename-button" class="secondary-button" type="button">Cancel</button>
+          <button id="confirm-rename-button" class="primary-button" type="button">Rename case</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="delete-modal" class="modal-backdrop hidden" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
+      <div class="modal-card compact-modal danger-modal">
+        <div class="modal-header">
+          <div>
+            <div class="section-kicker danger-kicker">Warning</div>
+            <h2 id="delete-title">Move case to trash?</h2>
+          </div>
+          <button id="close-delete-button" class="icon-button small" type="button" aria-label="Close">×</button>
+        </div>
+        <p id="delete-message" class="modal-intro"></p>
+        <label class="field-label" for="delete-confirmation-input">Type the exact case name to continue</label>
+        <input id="delete-confirmation-input" class="text-input" type="text" autocomplete="off">
+        <div id="delete-feedback" class="inline-feedback hidden"></div>
+        <div class="modal-actions">
+          <button id="cancel-delete-button" class="secondary-button" type="button">Cancel</button>
+          <button id="confirm-delete-button" class="danger-button" type="button" disabled>Move to trash</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="success-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="success-title">
+      <div class="modal-card success-card">
+        <button id="close-success-button" class="icon-button small success-close-button" type="button" aria-label="Close" title="Close">×</button>
+        <div class="success-icon" aria-hidden="true">✓</div>
+        <h2 id="success-title">Case created successfully</h2>
+        <p id="success-message"></p>
+        <div class="success-links">
+          <a id="open-spreadsheet-link" class="primary-button link-button" href="#" target="_blank">Open spreadsheet</a>
+          <a id="open-folder-link" class="secondary-button link-button" href="#" target="_blank">Open case folder</a>
+        </div>
+        <button id="close-success-action" class="text-button" type="button">Close</button>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <?!= include('Scripts'); ?>
+  </body>
+</html>

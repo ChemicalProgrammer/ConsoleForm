@@ -1,0 +1,1041 @@
+<script>
+  (function() {
+    'use strict';
+
+    var state = {
+      schema: null,
+      baseComponents: [],
+      components: [],
+      componentMap: {},
+      componentSnapshots: {},
+      settings: {},
+      settingsComplete: false,
+      setupError: '',
+      cases: [],
+      currentCase: null,
+      currentSection: 0,
+      workspaceTab: 'input',
+      dirty: false,
+      hydrating: false,
+      renameTarget: null,
+      deleteTarget: null,
+      toastTimer: null
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+      bindStaticEvents_();
+      loadApplication_();
+    });
+
+    function bindStaticEvents_() {
+      document.querySelectorAll('.step-tab').forEach(function(button) {
+        button.addEventListener('click', function() {
+          showSection_(Number(button.dataset.section));
+        });
+      });
+      document.querySelectorAll('.workspace-tab').forEach(function(button) {
+        button.addEventListener('click', function() {
+          showWorkspaceTab_(button.dataset.workspaceTab);
+        });
+      });
+
+      document.getElementById('previous-button').addEventListener('click', function() {
+        showSection_(state.currentSection - 1);
+      });
+      document.getElementById('next-button').addEventListener('click', function() {
+        showSection_(state.currentSection + 1);
+      });
+      document.getElementById('add-component-button').addEventListener('click', function() {
+        addComponentRow_('', null);
+        markDirty_();
+      });
+      document.getElementById('case-form').addEventListener('submit', submitForm_);
+      document.getElementById('case-form').addEventListener('input', markDirty_);
+      document.getElementById('case-form').addEventListener('change', markDirty_);
+
+      document.getElementById('new-case-button').addEventListener('click', startNewCase_);
+      document.getElementById('back-to-cases-button').addEventListener('click', function() {
+        showDashboard_(false);
+      });
+      document.getElementById('refresh-cases-button').addEventListener('click', loadCases_);
+      document.getElementById('import-cases-button').addEventListener('click', importExistingCases_);
+      document.getElementById('case-search').addEventListener('input', renderCaseList_);
+      document.getElementById('status-filter').addEventListener('change', renderCaseList_);
+      document.getElementById('case-table-body').addEventListener('click', handleCaseTableAction_);
+
+      document.getElementById('reload-case-button').addEventListener('click', reloadCurrentCase_);
+      document.getElementById('rename-case-button').addEventListener('click', function() {
+        openRename_(state.currentCase);
+      });
+      document.getElementById('trash-case-button').addEventListener('click', function() {
+        openDelete_(state.currentCase);
+      });
+
+      document.getElementById('settings-button').addEventListener('click', openSettings_);
+      document.getElementById('warning-settings-button').addEventListener('click', openSettings_);
+      document.getElementById('close-settings-button').addEventListener('click', closeSettings_);
+      document.getElementById('cancel-settings-button').addEventListener('click', closeSettings_);
+      document.getElementById('save-settings-button').addEventListener('click', saveSettings_);
+
+      document.getElementById('close-rename-button').addEventListener('click', closeRename_);
+      document.getElementById('cancel-rename-button').addEventListener('click', closeRename_);
+      document.getElementById('confirm-rename-button').addEventListener('click', confirmRename_);
+      document.getElementById('rename-case-input').addEventListener('keydown', function(event) {
+        if (event.key === 'Enter') confirmRename_();
+      });
+
+      document.getElementById('close-delete-button').addEventListener('click', closeDelete_);
+      document.getElementById('cancel-delete-button').addEventListener('click', closeDelete_);
+      document.getElementById('confirm-delete-button').addEventListener('click', confirmDelete_);
+      document.getElementById('delete-confirmation-input').addEventListener('input', updateDeleteButton_);
+
+      document.getElementById('close-success-button').addEventListener('click', closeSuccess_);
+      document.getElementById('close-success-action').addEventListener('click', closeSuccess_);
+
+      ['settings-modal', 'rename-modal', 'delete-modal', 'success-modal'].forEach(function(id) {
+        document.getElementById(id).addEventListener('click', function(event) {
+          if (event.target.id !== id) return;
+          if (id === 'settings-modal') closeSettings_();
+          if (id === 'rename-modal') closeRename_();
+          if (id === 'delete-modal') closeDelete_();
+          if (id === 'success-modal') closeSuccess_();
+        });
+      });
+
+      document.addEventListener('keydown', function(event) {
+        if (event.key !== 'Escape') return;
+        closeSettings_();
+        closeRename_();
+        closeDelete_();
+        closeSuccess_();
+      });
+
+      window.addEventListener('beforeunload', function(event) {
+        if (!state.dirty) return;
+        event.preventDefault();
+        event.returnValue = '';
+      });
+    }
+
+    function loadApplication_() {
+      setBusy_(true, 'Loading console…');
+      callServer_('getBootstrapData')
+        .then(function(data) {
+          state.schema = data.schema;
+          state.baseComponents = clone_(data.components || []);
+          resetComponentDatabase_();
+          state.settings = data.settings || {};
+          state.settingsComplete = Boolean(data.settingsComplete);
+          state.setupError = data.setupError || '';
+          state.cases = data.cases || [];
+
+          document.getElementById('app-name').textContent = data.appName || 'Case Console';
+          document.getElementById('current-user').textContent = data.currentUser || '';
+          renderSectionA_();
+          renderSectionD_();
+          applySchemaText_();
+          populateSettings_();
+          updateSettingsWarning_();
+          renderCaseList_();
+          showDashboard_(true);
+        })
+        .catch(function(error) {
+          showToast_(getErrorMessage_(error), 'error', 9000);
+        })
+        .finally(function() {
+          setBusy_(false);
+        });
+    }
+
+    function loadCases_() {
+      if (!state.settingsComplete) {
+        openSettings_();
+        return Promise.resolve();
+      }
+      setBusy_(true, 'Refreshing cases…');
+      return callServer_('listCases', { includeTrashed: true })
+        .then(function(cases) {
+          state.cases = cases || [];
+          state.setupError = '';
+          updateSettingsWarning_();
+          renderCaseList_();
+        })
+        .catch(function(error) {
+          showToast_(getErrorMessage_(error), 'error', 9000);
+        })
+        .finally(function() {
+          setBusy_(false);
+        });
+    }
+
+    function renderCaseList_() {
+      var query = document.getElementById('case-search').value.trim().toLowerCase();
+      var status = document.getElementById('status-filter').value;
+      var filtered = state.cases.filter(function(item) {
+        var statusMatch = status === 'ALL' || item.status === status;
+        var searchMatch = !query || item.caseName.toLowerCase().indexOf(query) !== -1;
+        return statusMatch && searchMatch;
+      });
+
+      var body = document.getElementById('case-table-body');
+      body.replaceChildren();
+      filtered.forEach(function(item) {
+        var row = document.createElement('tr');
+        row.className = item.status === 'TRASHED' ? 'trashed-row' : '';
+
+        var nameCell = document.createElement('td');
+        var name = createElement_('strong', 'case-row-name', item.caseName);
+        var id = createElement_('span', 'case-row-id', shortCaseId_(item.caseId));
+        nameCell.appendChild(name);
+        nameCell.appendChild(id);
+        row.appendChild(nameCell);
+
+        var statusCell = document.createElement('td');
+        statusCell.appendChild(createElement_(
+          'span',
+          'status-chip ' + (item.status === 'TRASHED' ? 'status-trashed' : 'status-active'),
+          item.status === 'TRASHED' ? 'Trashed' : 'Active'
+        ));
+        row.appendChild(statusCell);
+        row.appendChild(createElement_('td', 'date-cell', formatDate_(item.updatedAt)));
+        row.appendChild(createElement_('td', 'user-cell', item.updatedBy || '—'));
+
+        var actionsCell = document.createElement('td');
+        var actions = createElement_('div', 'row-actions');
+        if (item.status === 'ACTIVE') {
+          actions.appendChild(caseActionButton_('Open', 'open', item.caseId, 'primary-row-action'));
+          actions.appendChild(caseActionButton_('Trash', 'trash', item.caseId, 'danger-row-action'));
+        } else {
+          actions.appendChild(caseActionButton_('Restore', 'restore', item.caseId, 'restore-row-action'));
+        }
+        actionsCell.appendChild(actions);
+        row.appendChild(actionsCell);
+        body.appendChild(row);
+      });
+
+      var empty = document.getElementById('case-list-empty');
+      empty.classList.toggle('hidden', filtered.length > 0);
+      document.querySelector('.case-table-shell').classList.toggle('hidden', filtered.length === 0);
+      if (!filtered.length) {
+        document.getElementById('case-empty-title').textContent = query
+          ? 'No matching cases'
+          : status === 'TRASHED' ? 'Trash is empty' : 'No cases found';
+        document.getElementById('case-empty-message').textContent = query
+          ? 'Try another search term or status filter.'
+          : 'Create the first case or import folders made with the previous version.';
+      }
+    }
+
+    function caseActionButton_(label, action, caseId, className) {
+      var button = createElement_('button', className, label);
+      button.type = 'button';
+      button.dataset.action = action;
+      button.dataset.caseId = caseId;
+      return button;
+    }
+
+    function handleCaseTableAction_(event) {
+      var button = event.target.closest('button[data-action]');
+      if (!button) return;
+      var record = findLocalCase_(button.dataset.caseId);
+      if (!record) return;
+
+      if (button.dataset.action === 'open') openCase_(record.caseId);
+      if (button.dataset.action === 'trash') openDelete_(record);
+      if (button.dataset.action === 'restore') restoreCase_(record);
+    }
+
+    function startNewCase_() {
+      if (!state.settingsComplete) {
+        showToast_('Complete the shared application settings first.', 'error');
+        openSettings_();
+        return;
+      }
+      state.currentCase = null;
+      resetForm_();
+      updateWorkspaceHeader_();
+      document.getElementById('dashboard-view').classList.add('hidden');
+      document.getElementById('workspace-view').classList.remove('hidden');
+      showWorkspaceTab_('input');
+      showSection_(0);
+      setDirty_(false);
+      document.getElementById('case-name').focus();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function openCase_(caseId) {
+      setBusy_(true, 'Loading case data from Google Sheets…');
+      callServer_('getCase', caseId)
+        .then(function(result) {
+          state.currentCase = result.case;
+          populateForm_(result.data);
+          updateWorkspaceHeader_();
+          document.getElementById('dashboard-view').classList.add('hidden');
+          document.getElementById('workspace-view').classList.remove('hidden');
+          showWorkspaceTab_('input');
+          showSection_(0);
+          setDirty_(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        })
+        .catch(function(error) {
+          showToast_(getErrorMessage_(error), 'error', 9000);
+        })
+        .finally(function() {
+          setBusy_(false);
+        });
+    }
+
+    function reloadCurrentCase_() {
+      if (!state.currentCase) return;
+      if (state.dirty && !window.confirm('Discard unsaved changes and reload from Google Sheets?')) return;
+      setDirty_(false);
+      openCase_(state.currentCase.caseId);
+    }
+
+    function showDashboard_(force) {
+      if (!force && state.dirty && !window.confirm('Leave this case and discard unsaved changes?')) return;
+      setDirty_(false);
+      state.currentCase = null;
+      document.getElementById('workspace-view').classList.add('hidden');
+      document.getElementById('dashboard-view').classList.remove('hidden');
+      renderCaseList_();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function updateWorkspaceHeader_() {
+      var existing = Boolean(state.currentCase);
+      document.getElementById('workspace-kicker').textContent = existing ? 'Case workspace' : 'New case';
+      document.getElementById('workspace-title').textContent = existing ? state.currentCase.caseName : 'New case';
+      document.getElementById('workspace-meta').textContent = existing
+        ? 'Last modified ' + formatDate_(state.currentCase.updatedAt) + ' by ' + (state.currentCase.updatedBy || 'Unknown user')
+        : 'Complete any available information. Only the case name is required.';
+      document.getElementById('workspace-actions').classList.toggle('hidden', !existing);
+      document.getElementById('submit-button').textContent = existing ? 'Save changes' : 'Create case';
+
+      if (existing) {
+        document.getElementById('workspace-sheet-link').href = state.currentCase.spreadsheetUrl;
+        document.getElementById('workspace-folder-link').href = state.currentCase.folderUrl;
+      }
+    }
+
+    function showWorkspaceTab_(tabName) {
+      state.workspaceTab = tabName === 'output' ? 'output' : 'input';
+      document.querySelectorAll('.workspace-tab').forEach(function(button) {
+        button.classList.toggle('active', button.dataset.workspaceTab === state.workspaceTab);
+      });
+      document.getElementById('input-data-view').classList.toggle('hidden', state.workspaceTab !== 'input');
+      document.getElementById('output-data-view').classList.toggle('hidden', state.workspaceTab !== 'output');
+    }
+
+    function applySchemaText_() {
+      ['A', 'B', 'C', 'D'].forEach(function(letter) {
+        var section = state.schema['section' + letter];
+        document.getElementById('section-' + letter.toLowerCase() + '-title').textContent = section.title;
+        document.getElementById('section-' + letter.toLowerCase() + '-description').textContent = section.description;
+      });
+    }
+
+    function renderSectionA_() {
+      var container = document.getElementById('section-a-fields');
+      container.replaceChildren();
+      state.schema.sectionA.fields.forEach(function(field) {
+        var group = createElement_('div', 'field-group');
+        if (field.type === 'textarea') group.classList.add('full-width');
+        var label = createElement_('label', 'field-label', field.label);
+        label.htmlFor = 'field-' + field.id;
+        var control;
+
+        if (field.type === 'textarea') {
+          control = createElement_('textarea', 'textarea-input');
+        } else if (field.type === 'select') {
+          control = createElement_('select', 'select-input');
+          var placeholder = createElement_('option', '', 'Select an option');
+          placeholder.value = '';
+          control.appendChild(placeholder);
+          field.options.forEach(function(optionValue) {
+            var option = createElement_('option', '', optionValue);
+            option.value = optionValue;
+            control.appendChild(option);
+          });
+        } else {
+          control = createElement_('input', 'text-input');
+          control.type = 'text';
+        }
+
+        control.id = 'field-' + field.id;
+        control.dataset.fieldId = field.id;
+        control.placeholder = field.placeholder || '';
+        control.addEventListener('input', function() { clearInputError_(control); });
+        control.addEventListener('change', function() { clearInputError_(control); });
+        group.appendChild(label);
+        group.appendChild(control);
+        container.appendChild(group);
+      });
+    }
+
+    function renderSectionD_() {
+      var body = document.getElementById('section-d-fields');
+      body.replaceChildren();
+      state.schema.sectionD.fields.forEach(function(field) {
+        var row = document.createElement('tr');
+        row.dataset.fieldId = field.id;
+        row.appendChild(createElement_('td', '', field.label));
+        row.appendChild(createElement_('td', '', field.unit));
+        ['min', 'target', 'max'].forEach(function(kind) {
+          var cell = document.createElement('td');
+          var input = createElement_('input', 'number-input');
+          input.type = 'number';
+          input.step = 'any';
+          input.inputMode = 'decimal';
+          input.dataset.kind = kind;
+          input.dataset.fieldId = field.id;
+          input.setAttribute('aria-label', field.label + ' ' + kind);
+          input.addEventListener('input', function() { clearInputError_(input); });
+          cell.appendChild(input);
+          row.appendChild(cell);
+        });
+        body.appendChild(row);
+      });
+    }
+
+    function resetComponentDatabase_() {
+      state.components = clone_(state.baseComponents);
+      state.componentMap = state.components.reduce(function(map, component) {
+        map[component.code] = component;
+        return map;
+      }, {});
+      state.componentSnapshots = {};
+    }
+
+    function addLoadedComponentsToDatabase_(items) {
+      (items || []).forEach(function(item) {
+        if (!state.componentMap[item.code]) {
+          var temporary = {
+            code: item.code,
+            name: item.name || 'Component not found in current database',
+            characteristics: item.characteristics || {}
+          };
+          state.components.push(temporary);
+          state.componentMap[temporary.code] = temporary;
+        }
+        if (item.characteristics) state.componentSnapshots[item.code] = item.characteristics;
+      });
+    }
+
+    function addComponentRow_(selectedCode, percentageValue) {
+      var rows = document.querySelectorAll('.component-row');
+      if (rows.length >= state.components.length) {
+        showToast_('All available components have already been added.', 'error');
+        return;
+      }
+
+      var row = createElement_('div', 'component-row');
+      var select = createElement_('select', 'select-input component-code');
+      var emptyOption = createElement_('option', '', 'Select a code');
+      emptyOption.value = '';
+      select.appendChild(emptyOption);
+      state.components.forEach(function(component) {
+        var option = createElement_('option', '', component.code);
+        option.value = component.code;
+        select.appendChild(option);
+      });
+      select.value = selectedCode || '';
+
+      var name = createElement_('input', 'text-input readonly-input component-name');
+      name.type = 'text';
+      name.readOnly = true;
+      name.tabIndex = -1;
+      name.placeholder = 'Completed automatically';
+
+      var percentage = createElement_('input', 'number-input component-percentage');
+      percentage.type = 'number';
+      percentage.min = '0';
+      percentage.max = '100';
+      percentage.step = 'any';
+      percentage.inputMode = 'decimal';
+      percentage.placeholder = '0';
+      percentage.setAttribute('aria-label', 'Component percentage');
+      percentage.value = percentageValue == null ? '' : String(percentageValue);
+
+      var remove = createElement_('button', 'remove-component', '×');
+      remove.type = 'button';
+      remove.title = 'Remove component';
+      remove.setAttribute('aria-label', 'Remove component');
+
+      select.addEventListener('change', function() {
+        updateComponentRow_(row);
+        refreshComponentOptions_();
+        renderSectionC_();
+      });
+      percentage.addEventListener('input', function() {
+        clearInputError_(percentage);
+        updatePercentageTotal_();
+        renderSectionC_();
+      });
+      remove.addEventListener('click', function() {
+        row.remove();
+        if (!document.querySelector('.component-row')) addComponentRow_('', null);
+        refreshComponentOptions_();
+        updatePercentageTotal_();
+        renderSectionC_();
+        markDirty_();
+      });
+
+      row.appendChild(select);
+      row.appendChild(name);
+      row.appendChild(percentage);
+      row.appendChild(remove);
+      document.getElementById('component-rows').appendChild(row);
+      updateComponentRow_(row);
+      refreshComponentOptions_();
+      updatePercentageTotal_();
+      renderSectionC_();
+    }
+
+    function updateComponentRow_(row) {
+      var code = row.querySelector('.component-code').value;
+      var component = state.componentMap[code];
+      row.querySelector('.component-name').value = component ? component.name : '';
+      clearInputError_(row.querySelector('.component-code'));
+    }
+
+    function refreshComponentOptions_() {
+      var selects = Array.from(document.querySelectorAll('.component-code'));
+      var selected = selects.map(function(select) { return select.value; }).filter(Boolean);
+      selects.forEach(function(select) {
+        Array.from(select.options).forEach(function(option) {
+          option.disabled = Boolean(
+            option.value && option.value !== select.value && selected.indexOf(option.value) !== -1
+          );
+        });
+      });
+      document.getElementById('add-component-button').disabled = selects.length >= state.components.length;
+    }
+
+    function getSelectedComponents_() {
+      return Array.from(document.querySelectorAll('.component-row')).map(function(row) {
+        var code = row.querySelector('.component-code').value;
+        var component = state.componentMap[code];
+        var percentageText = row.querySelector('.component-percentage').value.trim();
+        return {
+          code: code,
+          name: component ? component.name : '',
+          percentageText: percentageText,
+          percentage: percentageText === '' ? NaN : Number(percentageText),
+          component: component || null
+        };
+      });
+    }
+
+    function updatePercentageTotal_() {
+      var total = getSelectedComponents_().reduce(function(sum, item) {
+        return sum + (Number.isFinite(item.percentage) ? item.percentage : 0);
+      }, 0);
+      var rounded = Math.round(total * 10000) / 10000;
+      document.getElementById('percentage-total').textContent = rounded + '%';
+      document.getElementById('percentage-bar').style.width = Math.min(Math.max(total, 0), 100) + '%';
+      document.getElementById('percentage-message').textContent = total === 0
+        ? 'Components and percentages are optional.'
+        : 'Current total: ' + rounded + '%. This value does not block saving.';
+    }
+
+    function renderSectionC_() {
+      if (!state.schema) return;
+      var selected = getSelectedComponents_().filter(function(item) { return item.component; });
+      var empty = document.getElementById('section-c-empty');
+      var container = document.getElementById('characteristic-table-container');
+      var head = document.getElementById('characteristic-table-head');
+      var body = document.getElementById('characteristic-table-body');
+      head.replaceChildren();
+      body.replaceChildren();
+      empty.classList.toggle('hidden', selected.length > 0);
+      container.classList.toggle('hidden', selected.length === 0);
+      if (!selected.length) return;
+
+      var headerRow = document.createElement('tr');
+      ['Code', 'Name', 'Percentage'].forEach(function(label) {
+        var header = createElement_('th', '', label);
+        header.scope = 'col';
+        headerRow.appendChild(header);
+      });
+      state.schema.sectionC.characteristics.forEach(function(characteristic) {
+        var label = characteristic.label;
+        if (characteristic.unit && characteristic.unit !== '-') label += ' (' + characteristic.unit + ')';
+        var header = createElement_('th', '', label);
+        header.scope = 'col';
+        header.title = label;
+        headerRow.appendChild(header);
+      });
+      head.appendChild(headerRow);
+
+      selected.forEach(function(item) {
+        var row = document.createElement('tr');
+        var codeCell = document.createElement('td');
+        codeCell.appendChild(createElement_('span', 'component-code-chip', item.code));
+        row.appendChild(codeCell);
+        row.appendChild(createElement_('td', 'component-name-cell', item.name));
+        row.appendChild(createElement_(
+          'td',
+          'component-percentage-cell',
+          Number.isFinite(item.percentage) ? item.percentage + '%' : '—'
+        ));
+
+        var characteristics = state.componentSnapshots[item.code] || item.component.characteristics || {};
+        state.schema.sectionC.characteristics.forEach(function(characteristic) {
+          var value = characteristics[characteristic.id];
+          row.appendChild(createElement_(
+            'td',
+            'characteristic-value-cell',
+            value == null || value === '' ? '—' : String(value)
+          ));
+        });
+        body.appendChild(row);
+      });
+    }
+
+    function showSection_(index) {
+      state.currentSection = Math.max(0, Math.min(3, index));
+      document.querySelectorAll('.step-tab').forEach(function(tab) {
+        tab.classList.toggle('active', Number(tab.dataset.section) === state.currentSection);
+      });
+      document.querySelectorAll('.form-panel').forEach(function(panel) {
+        panel.classList.toggle('active', Number(panel.dataset.panel) === state.currentSection);
+      });
+      document.getElementById('previous-button').classList.toggle('hidden', state.currentSection === 0);
+      document.getElementById('next-button').classList.toggle('hidden', state.currentSection === 3);
+      document.getElementById('submit-button').classList.remove('hidden');
+    }
+
+    function resetForm_() {
+      state.hydrating = true;
+      resetComponentDatabase_();
+      document.getElementById('case-form').reset();
+      document.getElementById('component-rows').replaceChildren();
+      addComponentRow_('', null);
+      clearAllErrors_();
+      updatePercentageTotal_();
+      renderSectionC_();
+      state.hydrating = false;
+    }
+
+    function populateForm_(data) {
+      state.hydrating = true;
+      resetComponentDatabase_();
+      addLoadedComponentsToDatabase_(data.components || []);
+      document.getElementById('case-form').reset();
+      document.getElementById('case-name').value = data.caseName || '';
+      state.schema.sectionA.fields.forEach(function(field) {
+        document.getElementById('field-' + field.id).value = (data.sectionA || {})[field.id] || '';
+      });
+      state.schema.sectionD.fields.forEach(function(field) {
+        var row = document.querySelector('#section-d-fields tr[data-field-id="' + field.id + '"]');
+        var values = (data.sectionD || {})[field.id] || {};
+        ['min', 'target', 'max'].forEach(function(kind) {
+          row.querySelector('[data-kind="' + kind + '"]').value = values[kind] == null ? '' : values[kind];
+        });
+      });
+      document.getElementById('component-rows').replaceChildren();
+      (data.components || []).forEach(function(item) {
+        addComponentRow_(item.code, item.percentage);
+      });
+      if (!(data.components || []).length) addComponentRow_('', null);
+      clearAllErrors_();
+      updatePercentageTotal_();
+      renderSectionC_();
+      state.hydrating = false;
+    }
+
+    function collectPayload_() {
+      var sectionA = {};
+      state.schema.sectionA.fields.forEach(function(field) {
+        sectionA[field.id] = document.getElementById('field-' + field.id).value.trim();
+      });
+      var sectionD = {};
+      state.schema.sectionD.fields.forEach(function(field) {
+        var row = document.querySelector('#section-d-fields tr[data-field-id="' + field.id + '"]');
+        sectionD[field.id] = {
+          min: row.querySelector('[data-kind="min"]').value,
+          target: row.querySelector('[data-kind="target"]').value,
+          max: row.querySelector('[data-kind="max"]').value
+        };
+      });
+      return {
+        caseName: document.getElementById('case-name').value.trim(),
+        sectionA: sectionA,
+        components: getSelectedComponents_().map(function(item) {
+          return { code: item.code, percentage: item.percentageText };
+        }),
+        sectionD: sectionD,
+        expectedUpdatedAt: state.currentCase ? state.currentCase.updatedAt : ''
+      };
+    }
+
+    function validateClient_() {
+      clearAllErrors_();
+      if (!state.settingsComplete) {
+        openSettings_();
+        showToast_('Complete the shared application settings.', 'error');
+        return false;
+      }
+      var caseName = document.getElementById('case-name');
+      if (!caseName.value.trim()) {
+        markInvalid_(caseName, 'Enter the case name.');
+        return false;
+      }
+      return true;
+    }
+
+    function submitForm_(event) {
+      event.preventDefault();
+      if (!validateClient_()) return;
+      var payload = collectPayload_();
+      var isUpdate = Boolean(state.currentCase);
+      setBusy_(true, isUpdate ? 'Saving changes to Google Sheets…' : 'Creating folders and spreadsheet…');
+
+      var request = isUpdate
+        ? callServer_('updateCase', state.currentCase.caseId, payload)
+        : callServer_('createCase', payload);
+
+      request
+        .then(function(result) {
+          state.currentCase = result.case;
+          upsertLocalCase_(result.case);
+          updateWorkspaceHeader_();
+          document.getElementById('case-name').value = result.case.caseName;
+          setDirty_(false);
+          if (isUpdate) {
+            showToast_('Changes saved to Google Sheets.', 'success');
+          } else {
+            showSuccess_(result);
+          }
+        })
+        .catch(function(error) {
+          showToast_(getErrorMessage_(error), 'error', 9000);
+        })
+        .finally(function() {
+          setBusy_(false);
+        });
+    }
+
+    function markDirty_() {
+      if (state.hydrating || document.getElementById('workspace-view').classList.contains('hidden')) return;
+      setDirty_(true);
+    }
+
+    function setDirty_(dirty) {
+      state.dirty = Boolean(dirty);
+      var status = document.getElementById('save-status');
+      status.textContent = state.dirty ? 'Unsaved changes' : (state.currentCase ? 'All changes saved' : '');
+      status.classList.toggle('dirty', state.dirty);
+    }
+
+    function importExistingCases_() {
+      if (!state.settingsComplete) {
+        openSettings_();
+        return;
+      }
+      setBusy_(true, 'Importing existing case folders…');
+      callServer_('migrateExistingCases')
+        .then(function(result) {
+          var message = result.imported + ' case(s) imported; ' + result.skipped + ' skipped.';
+          if (result.errors && result.errors.length) message += ' Some folders could not be imported.';
+          showToast_(message, result.errors && result.errors.length ? 'error' : 'success', 7000);
+          return loadCases_();
+        })
+        .catch(function(error) {
+          showToast_(getErrorMessage_(error), 'error', 9000);
+        })
+        .finally(function() {
+          setBusy_(false);
+        });
+    }
+
+    function openRename_(record) {
+      if (!record) return;
+      state.renameTarget = record;
+      document.getElementById('rename-case-input').value = record.caseName;
+      setFeedback_('rename-feedback', '', '');
+      document.getElementById('rename-modal').classList.remove('hidden');
+      setTimeout(function() {
+        document.getElementById('rename-case-input').focus();
+        document.getElementById('rename-case-input').select();
+      }, 50);
+    }
+
+    function closeRename_() {
+      state.renameTarget = null;
+      document.getElementById('rename-modal').classList.add('hidden');
+    }
+
+    function confirmRename_() {
+      if (!state.renameTarget) return;
+      var newName = document.getElementById('rename-case-input').value.trim();
+      if (!newName) {
+        setFeedback_('rename-feedback', 'Enter the new case name.', 'error');
+        return;
+      }
+      var targetId = state.renameTarget.caseId;
+      var button = document.getElementById('confirm-rename-button');
+      button.disabled = true;
+      callServer_('renameCase', targetId, newName)
+        .then(function(result) {
+          upsertLocalCase_(result.case);
+          if (state.currentCase && state.currentCase.caseId === targetId) {
+            state.currentCase = result.case;
+            document.getElementById('case-name').value = result.case.caseName;
+            updateWorkspaceHeader_();
+          }
+          closeRename_();
+          renderCaseList_();
+          showToast_('Case renamed successfully.', 'success');
+        })
+        .catch(function(error) {
+          setFeedback_('rename-feedback', getErrorMessage_(error), 'error');
+        })
+        .finally(function() {
+          button.disabled = false;
+        });
+    }
+
+    function openDelete_(record) {
+      if (!record) return;
+      state.deleteTarget = record;
+      document.getElementById('delete-message').textContent =
+        '“' + record.caseName + '” and everything inside its folder will be moved to Drive trash. It can be restored while it remains there.';
+      document.getElementById('delete-confirmation-input').value = '';
+      setFeedback_('delete-feedback', '', '');
+      updateDeleteButton_();
+      document.getElementById('delete-modal').classList.remove('hidden');
+      setTimeout(function() { document.getElementById('delete-confirmation-input').focus(); }, 50);
+    }
+
+    function closeDelete_() {
+      state.deleteTarget = null;
+      document.getElementById('delete-modal').classList.add('hidden');
+    }
+
+    function updateDeleteButton_() {
+      var value = document.getElementById('delete-confirmation-input').value.trim();
+      document.getElementById('confirm-delete-button').disabled =
+        !state.deleteTarget || value !== state.deleteTarget.caseName;
+    }
+
+    function confirmDelete_() {
+      if (!state.deleteTarget) return;
+      var target = state.deleteTarget;
+      var confirmation = document.getElementById('delete-confirmation-input').value.trim();
+      var button = document.getElementById('confirm-delete-button');
+      button.disabled = true;
+      setBusy_(true, 'Moving case to trash…');
+      callServer_('trashCase', target.caseId, confirmation)
+        .then(function(result) {
+          upsertLocalCase_(result.case);
+          var wasOpen = state.currentCase && state.currentCase.caseId === target.caseId;
+          closeDelete_();
+          if (wasOpen) {
+            setDirty_(false);
+            showDashboard_(true);
+          } else {
+            renderCaseList_();
+          }
+          showToast_('Case moved to trash.', 'success');
+        })
+        .catch(function(error) {
+          setFeedback_('delete-feedback', getErrorMessage_(error), 'error');
+        })
+        .finally(function() {
+          setBusy_(false);
+          updateDeleteButton_();
+        });
+    }
+
+    function restoreCase_(record) {
+      setBusy_(true, 'Restoring case…');
+      callServer_('restoreCase', record.caseId)
+        .then(function(result) {
+          upsertLocalCase_(result.case);
+          renderCaseList_();
+          showToast_('Case restored.', 'success');
+        })
+        .catch(function(error) {
+          showToast_(getErrorMessage_(error), 'error', 9000);
+        })
+        .finally(function() {
+          setBusy_(false);
+        });
+    }
+
+    function openSettings_() {
+      populateSettings_();
+      setFeedback_('settings-feedback', '', '');
+      document.getElementById('settings-modal').classList.remove('hidden');
+      setTimeout(function() { document.getElementById('destination-folder').focus(); }, 50);
+    }
+
+    function closeSettings_() {
+      document.getElementById('settings-modal').classList.add('hidden');
+    }
+
+    function populateSettings_() {
+      document.getElementById('destination-folder').value = state.settings.destinationFolderId || '';
+      document.getElementById('template-spreadsheet').value = state.settings.templateSpreadsheetId || '';
+      document.getElementById('registry-spreadsheet').value = state.settings.registrySpreadsheetId || '';
+    }
+
+    function saveSettings_() {
+      var destination = document.getElementById('destination-folder').value.trim();
+      var template = document.getElementById('template-spreadsheet').value.trim();
+      var registry = document.getElementById('registry-spreadsheet').value.trim();
+      if (!destination || !template) {
+        setFeedback_('settings-feedback', 'Complete the destination folder and template.', 'error');
+        return;
+      }
+
+      var button = document.getElementById('save-settings-button');
+      button.disabled = true;
+      button.textContent = 'Validating…';
+      setFeedback_('settings-feedback', '', '');
+      callServer_('saveAppSettings', {
+        destinationFolderId: destination,
+        templateSpreadsheetId: template,
+        registrySpreadsheetId: registry
+      })
+        .then(function(result) {
+          state.settings = {
+            destinationFolderId: result.destinationFolderId,
+            templateSpreadsheetId: result.templateSpreadsheetId,
+            registrySpreadsheetId: result.registrySpreadsheetId
+          };
+          state.settingsComplete = true;
+          state.setupError = '';
+          populateSettings_();
+          updateSettingsWarning_();
+          setFeedback_(
+            'settings-feedback',
+            'Shared configuration saved. Registry: “' + result.registrySpreadsheetName + '”.',
+            'success'
+          );
+          return loadCases_().then(function() {
+            setTimeout(closeSettings_, 700);
+          });
+        })
+        .catch(function(error) {
+          setFeedback_('settings-feedback', getErrorMessage_(error), 'error');
+        })
+        .finally(function() {
+          button.disabled = false;
+          button.textContent = 'Validate and save';
+        });
+    }
+
+    function updateSettingsWarning_() {
+      var warning = document.getElementById('settings-warning');
+      warning.classList.toggle('hidden', state.settingsComplete && !state.setupError);
+      document.getElementById('settings-warning-text').textContent = state.setupError ||
+        'Save the shared destination folder and template before creating a case.';
+      var unavailable = !state.settingsComplete || Boolean(state.setupError);
+      document.getElementById('new-case-button').disabled = unavailable;
+      document.getElementById('import-cases-button').disabled = unavailable;
+    }
+
+    function showSuccess_(result) {
+      document.getElementById('success-message').textContent =
+        '“' + result.caseName + '” was created with folders 01–04 and its Google Sheets file inside 01.';
+      document.getElementById('open-spreadsheet-link').href = result.spreadsheetUrl;
+      document.getElementById('open-folder-link').href = result.caseFolderUrl;
+      document.getElementById('success-modal').classList.remove('hidden');
+    }
+
+    function closeSuccess_() {
+      document.getElementById('success-modal').classList.add('hidden');
+    }
+
+    function upsertLocalCase_(record) {
+      var index = state.cases.findIndex(function(item) { return item.caseId === record.caseId; });
+      if (index === -1) state.cases.unshift(record);
+      else state.cases[index] = record;
+    }
+
+    function findLocalCase_(caseId) {
+      return state.cases.find(function(item) { return item.caseId === caseId; }) || null;
+    }
+
+    function setFeedback_(elementId, message, type) {
+      var feedback = document.getElementById(elementId);
+      feedback.textContent = message;
+      feedback.className = 'inline-feedback' + (type ? ' ' + type : ' hidden');
+    }
+
+    function markInvalid_(control, message) {
+      if (control) {
+        control.classList.add('input-error');
+        control.focus();
+      }
+      showToast_(message, 'error');
+    }
+
+    function clearInputError_(control) {
+      if (control) control.classList.remove('input-error');
+    }
+
+    function clearAllErrors_() {
+      document.querySelectorAll('.input-error').forEach(function(control) {
+        control.classList.remove('input-error');
+      });
+    }
+
+    function setBusy_(busy, message) {
+      document.getElementById('busy-message').textContent = message || 'Processing…';
+      document.getElementById('busy-overlay').classList.toggle('hidden', !busy);
+    }
+
+    function showToast_(message, type, duration) {
+      var toast = document.getElementById('toast');
+      window.clearTimeout(state.toastTimer);
+      toast.textContent = message;
+      toast.className = 'toast' + (type ? ' ' + type : '');
+      state.toastTimer = window.setTimeout(function() {
+        toast.classList.add('hidden');
+      }, duration || 4500);
+    }
+
+    function callServer_(methodName) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      return new Promise(function(resolve, reject) {
+        var runner = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(reject);
+        runner[methodName].apply(runner, args);
+      });
+    }
+
+    function formatDate_(isoValue) {
+      if (!isoValue) return '—';
+      var date = new Date(isoValue);
+      if (!isFinite(date.getTime())) return '—';
+      return new Intl.DateTimeFormat('en', {
+        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      }).format(date);
+    }
+
+    function shortCaseId_(caseId) {
+      return caseId ? 'ID ' + caseId.slice(0, 8).toUpperCase() : '';
+    }
+
+    function getErrorMessage_(error) {
+      if (!error) return 'An unexpected error occurred.';
+      return error.message || String(error);
+    }
+
+    function createElement_(tagName, className, text) {
+      var element = document.createElement(tagName);
+      if (className) element.className = className;
+      if (text != null) element.textContent = text;
+      return element;
+    }
+
+    function clone_(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+  })();
+</script>
