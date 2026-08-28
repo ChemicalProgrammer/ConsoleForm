@@ -1,6 +1,9 @@
 /**
- * Column order for the central Case Registry spreadsheet.
- * The registry contains only metadata; form answers remain in each case file.
+ * Case Registry stored in Script Properties.
+ *
+ * Each case is stored as an independent JSON value. This avoids rewriting one
+ * large JSON document and keeps concurrent writes safe when the public service
+ * methods use ScriptLock. Form answers remain in each case spreadsheet.
  */
 var CASE_REGISTRY_COLUMNS = Object.freeze([
   { key: 'caseId', header: 'CASE_ID' },
@@ -17,104 +20,19 @@ var CASE_REGISTRY_COLUMNS = Object.freeze([
   { key: 'trashedBy', header: 'TRASHED_BY' }
 ]);
 
-/** Creates a native Google Sheets registry inside the configured folder. */
-function createRegistrySpreadsheet_(destinationFolderId) {
-  var metadata = {
-    name: APP_CONFIG.registryFileName,
-    mimeType: 'application/vnd.google-apps.spreadsheet',
-    parents: [destinationFolderId]
-  };
-
-  try {
-    var created = Drive.Files.create(metadata, null, {
-      supportsAllDrives: true,
-      fields: 'id,name'
-    });
-    return created.id;
-  } catch (advancedError) {
-    // Fallback supports My Drive installations if the advanced service has not
-    // yet been enabled. Shared Drives should use the configured Drive service.
-    try {
-      var spreadsheet = SpreadsheetApp.create(APP_CONFIG.registryFileName);
-      var file = DriveApp.getFileById(spreadsheet.getId());
-      file.moveTo(DriveApp.getFolderById(destinationFolderId));
-      return spreadsheet.getId();
-    } catch (fallbackError) {
-      throw new Error(
-        'The Case Registry could not be created. Enable the Advanced Drive service and verify Shared Drive permissions.'
-      );
-    }
-  }
-}
-
-/** Ensures the Cases sheet and its fixed header are present. */
-function initializeRegistry_(registrySpreadsheetId) {
-  var spreadsheet = SpreadsheetApp.openById(registrySpreadsheetId);
-  var sheet = spreadsheet.getSheetByName(APP_CONFIG.registrySheetName);
-  var createdHeader = false;
-
-  if (!sheet) {
-    var sheets = spreadsheet.getSheets();
-    if (sheets.length === 1 && sheets[0].getLastRow() === 0) {
-      sheet = sheets[0];
-      sheet.setName(APP_CONFIG.registrySheetName);
-    } else {
-      sheet = spreadsheet.insertSheet(APP_CONFIG.registrySheetName);
-    }
-  }
-
-  var headers = CASE_REGISTRY_COLUMNS.map(function(column) {
-    return column.header;
-  });
-  var currentHeaders = sheet
-    .getRange(1, 1, 1, headers.length)
-    .getDisplayValues()[0];
-
-  if (currentHeaders.join('|') !== headers.join('|')) {
-    if (sheet.getLastRow() > 1 || currentHeaders.some(Boolean)) {
-      throw new Error(
-        'The Case Registry header does not match the expected structure. Use a blank spreadsheet or restore the documented columns.'
-      );
-    }
-    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    createdHeader = true;
-  }
-
-  if (createdHeader) {
-    sheet.setFrozenRows(1);
-    sheet.getRange(1, 1, 1, headers.length)
-      .setFontWeight('bold')
-      .setFontColor('#ffffff')
-      .setBackground('#4f46e5');
-    sheet.autoResizeColumns(1, headers.length);
-  }
-  return sheet;
-}
-
-function getRegistrySheet_() {
-  var settings = getAppSettings();
-  if (!settings.registrySpreadsheetId) {
-    throw new Error('The Case Registry has not been configured.');
-  }
-  return initializeRegistry_(settings.registrySpreadsheetId);
-}
-
 function getAllCaseRecords_() {
-  var sheet = getRegistrySheet_();
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
+  migrateLegacySheetRegistryIfNeeded_();
+  var properties = PropertiesService.getScriptProperties().getProperties();
+  var prefix = APP_CONFIG.registryRecordPrefix;
 
-  var values = sheet
-    .getRange(2, 1, lastRow - 1, CASE_REGISTRY_COLUMNS.length)
-    .getValues();
-
-  return values.reduce(function(records, row, index) {
-    if (!String(row[0] || '').trim()) return records;
-    var record = { _rowNumber: index + 2 };
-    CASE_REGISTRY_COLUMNS.forEach(function(column, columnIndex) {
-      record[column.key] = row[columnIndex];
-    });
-    records.push(record);
+  return Object.keys(properties).reduce(function(records, key) {
+    if (key.indexOf(prefix) !== 0) return records;
+    try {
+      var record = JSON.parse(properties[key]);
+      if (record && String(record.caseId || '').trim()) records.push(record);
+    } catch (error) {
+      console.error('Invalid Case Registry property “' + key + '”: ' + error.message);
+    }
     return records;
   }, []);
 }
@@ -123,11 +41,17 @@ function findCaseRecordById_(caseId) {
   var normalizedId = String(caseId || '').trim();
   if (!normalizedId) throw new Error('A valid case ID is required.');
 
-  var record = getAllCaseRecords_().find(function(item) {
-    return String(item.caseId) === normalizedId;
-  });
-  if (!record) throw new Error('The requested case was not found in the registry.');
-  return record;
+  migrateLegacySheetRegistryIfNeeded_();
+  var json = PropertiesService.getScriptProperties().getProperty(
+    caseRecordPropertyKey_(normalizedId)
+  );
+  if (!json) throw new Error('The requested case was not found in the registry.');
+
+  try {
+    return JSON.parse(json);
+  } catch (error) {
+    throw new Error('The requested case contains invalid registry metadata.');
+  }
 }
 
 function findCaseRecordByFolderId_(folderId) {
@@ -147,9 +71,16 @@ function listCaseRecords_(includeTrashed) {
 }
 
 function appendCaseRecord_(record) {
-  var sheet = getRegistrySheet_();
-  sheet.appendRow(caseRecordToRow_(record));
-  return findCaseRecordById_(record.caseId);
+  var caseId = String((record && record.caseId) || '').trim();
+  if (!caseId) throw new Error('A Case Registry record requires a case ID.');
+
+  var properties = PropertiesService.getScriptProperties();
+  var key = caseRecordPropertyKey_(caseId);
+  if (properties.getProperty(key)) {
+    throw new Error('A Case Registry record already exists for this case ID.');
+  }
+  properties.setProperty(key, JSON.stringify(normalizeCaseRecordForStorage_(record)));
+  return findCaseRecordById_(caseId);
 }
 
 function updateCaseRecord_(caseId, updates) {
@@ -161,18 +92,29 @@ function updateCaseRecord_(caseId, updates) {
     }
   });
 
-  var sheet = getRegistrySheet_();
-  sheet
-    .getRange(record._rowNumber, 1, 1, CASE_REGISTRY_COLUMNS.length)
-    .setValues([caseRecordToRow_(record)]);
-  return findCaseRecordById_(caseId);
+  var normalized = normalizeCaseRecordForStorage_(record);
+  PropertiesService.getScriptProperties().setProperty(
+    caseRecordPropertyKey_(caseId),
+    JSON.stringify(normalized)
+  );
+  return normalized;
 }
 
-function caseRecordToRow_(record) {
-  return CASE_REGISTRY_COLUMNS.map(function(column) {
+function caseRecordPropertyKey_(caseId) {
+  return APP_CONFIG.registryRecordPrefix + String(caseId || '').trim();
+}
+
+function normalizeCaseRecordForStorage_(record) {
+  var normalized = {};
+  CASE_REGISTRY_COLUMNS.forEach(function(column) {
     var value = record[column.key];
-    return value == null ? '' : value;
+    if (value instanceof Date) value = value.toISOString();
+    normalized[column.key] = value == null ? '' : value;
   });
+  normalized.createdBy = sanitizeActor_(normalized.createdBy);
+  normalized.updatedBy = sanitizeActor_(normalized.updatedBy);
+  normalized.trashedBy = sanitizeActor_(normalized.trashedBy);
+  return normalized;
 }
 
 function serializeCaseRecord_(record) {
@@ -184,11 +126,11 @@ function serializeCaseRecord_(record) {
     status: String(record.status || 'ACTIVE'),
     createdAt: dateToIso_(record.createdAt),
     updatedAt: dateToIso_(record.updatedAt),
-    createdBy: String(record.createdBy || ''),
-    updatedBy: String(record.updatedBy || ''),
+    createdBy: sanitizeActor_(record.createdBy),
+    updatedBy: sanitizeActor_(record.updatedBy),
     schemaVersion: String(record.schemaVersion || ''),
     trashedAt: dateToIso_(record.trashedAt),
-    trashedBy: String(record.trashedBy || ''),
+    trashedBy: sanitizeActor_(record.trashedBy),
     folderUrl: record.folderId
       ? 'https://drive.google.com/drive/folders/' + record.folderId
       : '',
@@ -198,12 +140,79 @@ function serializeCaseRecord_(record) {
   };
 }
 
+/**
+ * Imports the previous Google Sheets registry once. The old spreadsheet is
+ * deliberately retained as a non-destructive backup.
+ */
+function migrateLegacySheetRegistryIfNeeded_() {
+  var properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(APP_CONFIG.registryMigrationKey)) return;
+
+  var legacyId = properties.getProperty(
+    APP_CONFIG.scriptPropertyKeys.legacyRegistrySpreadsheetId
+  );
+  if (legacyId) {
+    var records = readLegacySheetRegistry_(legacyId);
+    records.forEach(function(record) {
+      var caseId = String(record.caseId || '').trim();
+      if (!caseId) return;
+      var key = caseRecordPropertyKey_(caseId);
+      if (!properties.getProperty(key)) {
+        properties.setProperty(key, JSON.stringify(normalizeCaseRecordForStorage_(record)));
+      }
+    });
+  }
+
+  properties.setProperty(APP_CONFIG.registryMigrationKey, new Date().toISOString());
+}
+
+function readLegacySheetRegistry_(spreadsheetId) {
+  try {
+    var spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = spreadsheet.getSheetByName('Cases');
+    if (!sheet || sheet.getLastRow() < 2) return [];
+
+    var expectedHeaders = CASE_REGISTRY_COLUMNS.map(function(column) {
+      return column.header;
+    });
+    var headers = sheet
+      .getRange(1, 1, 1, expectedHeaders.length)
+      .getDisplayValues()[0];
+    if (headers.join('|') !== expectedHeaders.join('|')) {
+      throw new Error('The previous Case Registry header is not compatible.');
+    }
+
+    return sheet
+      .getRange(2, 1, sheet.getLastRow() - 1, expectedHeaders.length)
+      .getValues()
+      .reduce(function(records, row) {
+        if (!String(row[0] || '').trim()) return records;
+        var record = {};
+        CASE_REGISTRY_COLUMNS.forEach(function(column, index) {
+          record[column.key] = row[index];
+        });
+        records.push(record);
+        return records;
+      }, []);
+  } catch (error) {
+    throw new Error(
+      'The previous Case Registry could not be migrated to Script Properties: ' +
+      (error && error.message ? error.message : String(error))
+    );
+  }
+}
+
 function getCurrentUserEmail_() {
   try {
-    return Session.getActiveUser().getEmail() || 'Unknown user';
+    return sanitizeActor_(Session.getActiveUser().getEmail());
   } catch (error) {
-    return 'Unknown user';
+    return '';
   }
+}
+
+function sanitizeActor_(value) {
+  var actor = String(value || '').trim();
+  return /^unknown user$/i.test(actor) ? '' : actor;
 }
 
 function dateToMillis_(value) {

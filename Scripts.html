@@ -2,12 +2,14 @@
   (function() {
     'use strict';
 
+    var OTHER_COMPONENT_VALUE = '__OTHER__';
+
     var state = {
       schema: null,
       baseComponents: [],
       components: [],
       componentMap: {},
-      componentSnapshots: {},
+      maxComponentRows: 50,
       settings: {},
       settingsComplete: false,
       setupError: '',
@@ -123,6 +125,7 @@
         .then(function(data) {
           state.schema = data.schema;
           state.baseComponents = clone_(data.components || []);
+          state.maxComponentRows = Number(data.maxComponentRows) || 50;
           resetComponentDatabase_();
           state.settings = data.settings || {};
           state.settingsComplete = Boolean(data.settingsComplete);
@@ -130,7 +133,8 @@
           state.cases = data.cases || [];
 
           document.getElementById('app-name').textContent = data.appName || 'Case Console';
-          document.getElementById('current-user').textContent = data.currentUser || '';
+          document.getElementById('current-user').textContent =
+            /^unknown user$/i.test(data.currentUser || '') ? '' : (data.currentUser || '');
           renderSectionA_();
           renderSectionD_();
           applySchemaText_();
@@ -203,10 +207,10 @@
         var actionsCell = document.createElement('td');
         var actions = createElement_('div', 'row-actions');
         if (item.status === 'ACTIVE') {
-          actions.appendChild(caseActionButton_('Open', 'open', item.caseId, 'primary-row-action'));
-          actions.appendChild(caseActionButton_('Trash', 'trash', item.caseId, 'danger-row-action'));
+          actions.appendChild(caseActionButton_('Open', '↗', 'open', item.caseId, 'primary-row-action'));
+          actions.appendChild(caseActionButton_('Trash', '⌫', 'trash', item.caseId, 'danger-row-action'));
         } else {
-          actions.appendChild(caseActionButton_('Restore', 'restore', item.caseId, 'restore-row-action'));
+          actions.appendChild(caseActionButton_('Restore', '↶', 'restore', item.caseId, 'restore-row-action'));
         }
         actionsCell.appendChild(actions);
         row.appendChild(actionsCell);
@@ -226,11 +230,13 @@
       }
     }
 
-    function caseActionButton_(label, action, caseId, className) {
-      var button = createElement_('button', className, label);
+    function caseActionButton_(label, icon, action, caseId, className) {
+      var button = createElement_('button', className);
       button.type = 'button';
       button.dataset.action = action;
       button.dataset.caseId = caseId;
+      button.appendChild(createElement_('span', 'row-action-icon', icon));
+      button.appendChild(createElement_('span', '', label));
       return button;
     }
 
@@ -307,7 +313,8 @@
       document.getElementById('workspace-kicker').textContent = existing ? 'Case workspace' : 'New case';
       document.getElementById('workspace-title').textContent = existing ? state.currentCase.caseName : 'New case';
       document.getElementById('workspace-meta').textContent = existing
-        ? 'Last modified ' + formatDate_(state.currentCase.updatedAt) + ' by ' + (state.currentCase.updatedBy || 'Unknown user')
+        ? 'Last modified ' + formatDate_(state.currentCase.updatedAt) +
+          (state.currentCase.updatedBy ? ' by ' + state.currentCase.updatedBy : '')
         : 'Complete any available information. Only the case name is required.';
       document.getElementById('workspace-actions').classList.toggle('hidden', !existing);
       document.getElementById('submit-button').textContent = existing ? 'Save changes' : 'Create case';
@@ -404,48 +411,43 @@
         map[component.code] = component;
         return map;
       }, {});
-      state.componentSnapshots = {};
     }
 
-    function addLoadedComponentsToDatabase_(items) {
-      (items || []).forEach(function(item) {
-        if (!state.componentMap[item.code]) {
-          var temporary = {
-            code: item.code,
-            name: item.name || 'Component not found in current database',
-            characteristics: item.characteristics || {}
-          };
-          state.components.push(temporary);
-          state.componentMap[temporary.code] = temporary;
-        }
-        if (item.characteristics) state.componentSnapshots[item.code] = item.characteristics;
-      });
-    }
-
-    function addComponentRow_(selectedCode, percentageValue) {
+    function addComponentRow_(selectedCode, percentageValue, loadedItem) {
       var rows = document.querySelectorAll('.component-row');
-      if (rows.length >= state.components.length) {
-        showToast_('All available components have already been added.', 'error');
+      if (rows.length >= state.maxComponentRows) {
+        showToast_('The template supports up to ' + state.maxComponentRows + ' component rows.', 'error');
         return;
       }
 
       var row = createElement_('div', 'component-row');
-      var select = createElement_('select', 'select-input component-code');
-      var emptyOption = createElement_('option', '', 'Select a code');
+      var select = createElement_('select', 'select-input component-selector');
+      var emptyOption = createElement_('option', '', 'Select a component');
       emptyOption.value = '';
       select.appendChild(emptyOption);
       state.components.forEach(function(component) {
-        var option = createElement_('option', '', component.code);
+        var option = createElement_('option', '', component.code + ' — ' + component.name);
         option.value = component.code;
         select.appendChild(option);
       });
-      select.value = selectedCode || '';
+      var otherOption = createElement_('option', '', 'Other');
+      otherOption.value = OTHER_COMPONENT_VALUE;
+      select.appendChild(otherOption);
+
+      var loadedIsCustom = Boolean(
+        loadedItem && (loadedItem.isCustom || !state.componentMap[selectedCode])
+      );
+      select.value = loadedIsCustom ? OTHER_COMPONENT_VALUE : (selectedCode || '');
+
+      var code = createElement_('input', 'text-input readonly-input component-code');
+      code.type = 'text';
+      code.readOnly = true;
+      code.placeholder = 'Code';
 
       var name = createElement_('input', 'text-input readonly-input component-name');
       name.type = 'text';
       name.readOnly = true;
-      name.tabIndex = -1;
-      name.placeholder = 'Completed automatically';
+      name.placeholder = 'Component name';
 
       var percentage = createElement_('input', 'number-input component-percentage');
       percentage.type = 'number';
@@ -457,14 +459,29 @@
       percentage.setAttribute('aria-label', 'Component percentage');
       percentage.value = percentageValue == null ? '' : String(percentageValue);
 
+      row._characteristics = clone_(
+        (loadedItem && loadedItem.characteristics) || {}
+      );
+      row._loadedCode = loadedItem ? loadedItem.code || '' : '';
+      row._loadedName = loadedItem ? loadedItem.name || '' : '';
+      row._isCustom = loadedIsCustom;
+
       var remove = createElement_('button', 'remove-component', '×');
       remove.type = 'button';
       remove.title = 'Remove component';
       remove.setAttribute('aria-label', 'Remove component');
 
       select.addEventListener('change', function() {
-        updateComponentRow_(row);
+        updateComponentRow_(row, false);
         refreshComponentOptions_();
+        renderSectionC_();
+      });
+      code.addEventListener('input', function() {
+        row._loadedCode = code.value;
+        renderSectionC_();
+      });
+      name.addEventListener('input', function() {
+        row._loadedName = name.value;
         renderSectionC_();
       });
       percentage.addEventListener('input', function() {
@@ -482,49 +499,110 @@
       });
 
       row.appendChild(select);
+      row.appendChild(code);
       row.appendChild(name);
       row.appendChild(percentage);
       row.appendChild(remove);
       document.getElementById('component-rows').appendChild(row);
-      updateComponentRow_(row);
+      updateComponentRow_(row, true);
       refreshComponentOptions_();
       updatePercentageTotal_();
       renderSectionC_();
     }
 
-    function updateComponentRow_(row) {
-      var code = row.querySelector('.component-code').value;
-      var component = state.componentMap[code];
-      row.querySelector('.component-name').value = component ? component.name : '';
-      clearInputError_(row.querySelector('.component-code'));
+    function updateComponentRow_(row, preserveLoadedValues) {
+      var selection = row.querySelector('.component-selector').value;
+      var codeInput = row.querySelector('.component-code');
+      var nameInput = row.querySelector('.component-name');
+      var isCustom = selection === OTHER_COMPONENT_VALUE;
+      var component = state.componentMap[selection];
+
+      row._isCustom = isCustom;
+      row.classList.toggle('custom-component-row', isCustom);
+      codeInput.readOnly = !isCustom;
+      nameInput.readOnly = !isCustom;
+      codeInput.classList.toggle('readonly-input', !isCustom);
+      nameInput.classList.toggle('readonly-input', !isCustom);
+
+      if (isCustom) {
+        if (preserveLoadedValues && (row._loadedCode || row._loadedName)) {
+          codeInput.value = row._loadedCode;
+          nameInput.value = row._loadedName;
+        } else if (!preserveLoadedValues || (!codeInput.value && !nameInput.value)) {
+          codeInput.value = nextOtherCode_();
+          nameInput.value = 'Other component';
+          row._characteristics = emptyCharacteristics_();
+        }
+      } else if (component) {
+        codeInput.value = component.code;
+        nameInput.value = component.name;
+        if (!preserveLoadedValues || !Object.keys(row._characteristics || {}).length) {
+          row._characteristics = clone_(component.characteristics || {});
+        }
+      } else {
+        codeInput.value = '';
+        nameInput.value = '';
+        row._characteristics = {};
+      }
     }
 
     function refreshComponentOptions_() {
-      var selects = Array.from(document.querySelectorAll('.component-code'));
+      var selects = Array.from(document.querySelectorAll('.component-selector'));
       var selected = selects.map(function(select) { return select.value; }).filter(Boolean);
       selects.forEach(function(select) {
         Array.from(select.options).forEach(function(option) {
           option.disabled = Boolean(
-            option.value && option.value !== select.value && selected.indexOf(option.value) !== -1
+            option.value &&
+            option.value !== OTHER_COMPONENT_VALUE &&
+            option.value !== select.value &&
+            selected.indexOf(option.value) !== -1
           );
         });
       });
-      document.getElementById('add-component-button').disabled = selects.length >= state.components.length;
+      document.getElementById('add-component-button').disabled = selects.length >= state.maxComponentRows;
     }
 
     function getSelectedComponents_() {
       return Array.from(document.querySelectorAll('.component-row')).map(function(row) {
-        var code = row.querySelector('.component-code').value;
-        var component = state.componentMap[code];
+        var selection = row.querySelector('.component-selector').value;
+        var isCustom = selection === OTHER_COMPONENT_VALUE;
+        var component = isCustom ? null : state.componentMap[selection];
+        var code = row.querySelector('.component-code').value.trim();
+        var name = row.querySelector('.component-name').value.trim();
         var percentageText = row.querySelector('.component-percentage').value.trim();
         return {
+          selection: selection,
           code: code,
-          name: component ? component.name : '',
+          name: name,
           percentageText: percentageText,
           percentage: percentageText === '' ? NaN : Number(percentageText),
-          component: component || null
+          component: component || (isCustom ? { characteristics: row._characteristics || {} } : null),
+          characteristics: clone_(row._characteristics || {}),
+          isCustom: isCustom,
+          sourceRow: row
         };
       });
+    }
+
+    function emptyCharacteristics_() {
+      var values = {};
+      state.schema.sectionC.characteristics.forEach(function(characteristic) {
+        values[characteristic.id] = '';
+      });
+      return values;
+    }
+
+    function nextOtherCode_() {
+      var used = Array.from(document.querySelectorAll('.component-code')).map(function(input) {
+        return input.value.trim().toUpperCase();
+      });
+      var index = 1;
+      var candidate;
+      do {
+        candidate = 'OTHER-' + String(index).padStart(3, '0');
+        index += 1;
+      } while (used.indexOf(candidate) !== -1);
+      return candidate;
     }
 
     function updatePercentageTotal_() {
@@ -541,7 +619,7 @@
 
     function renderSectionC_() {
       if (!state.schema) return;
-      var selected = getSelectedComponents_().filter(function(item) { return item.component; });
+      var selected = getSelectedComponents_().filter(function(item) { return item.selection; });
       var empty = document.getElementById('section-c-empty');
       var container = document.getElementById('characteristic-table-container');
       var head = document.getElementById('characteristic-table-head');
@@ -580,14 +658,27 @@
           Number.isFinite(item.percentage) ? item.percentage + '%' : '—'
         ));
 
-        var characteristics = state.componentSnapshots[item.code] || item.component.characteristics || {};
+        var characteristics = item.characteristics || {};
         state.schema.sectionC.characteristics.forEach(function(characteristic) {
           var value = characteristics[characteristic.id];
-          row.appendChild(createElement_(
-            'td',
-            'characteristic-value-cell',
-            value == null || value === '' ? '—' : String(value)
-          ));
+          var cell = document.createElement('td');
+          if (item.isCustom) {
+            var input = createElement_('input', 'characteristic-input');
+            input.type = 'text';
+            input.value = value == null ? '' : String(value);
+            input.placeholder = 'Enter value';
+            input.setAttribute('aria-label', item.name + ' ' + characteristic.label);
+            input.addEventListener('input', function() {
+              item.sourceRow._characteristics[characteristic.id] = input.value;
+              markDirty_();
+            });
+            cell.className = 'characteristic-edit-cell';
+            cell.appendChild(input);
+          } else {
+            cell.className = 'characteristic-value-cell';
+            cell.textContent = value == null || value === '' ? '—' : String(value);
+          }
+          row.appendChild(cell);
         });
         body.appendChild(row);
       });
@@ -621,7 +712,6 @@
     function populateForm_(data) {
       state.hydrating = true;
       resetComponentDatabase_();
-      addLoadedComponentsToDatabase_(data.components || []);
       document.getElementById('case-form').reset();
       document.getElementById('case-name').value = data.caseName || '';
       state.schema.sectionA.fields.forEach(function(field) {
@@ -636,7 +726,7 @@
       });
       document.getElementById('component-rows').replaceChildren();
       (data.components || []).forEach(function(item) {
-        addComponentRow_(item.code, item.percentage);
+        addComponentRow_(item.code, item.percentage, item);
       });
       if (!(data.components || []).length) addComponentRow_('', null);
       clearAllErrors_();
@@ -663,7 +753,13 @@
         caseName: document.getElementById('case-name').value.trim(),
         sectionA: sectionA,
         components: getSelectedComponents_().map(function(item) {
-          return { code: item.code, percentage: item.percentageText };
+          return {
+            code: item.code,
+            name: item.name,
+            percentage: item.percentageText,
+            characteristics: item.characteristics,
+            isCustom: item.isCustom
+          };
         }),
         sectionD: sectionD,
         expectedUpdatedAt: state.currentCase ? state.currentCase.updatedAt : ''
@@ -879,13 +975,11 @@
     function populateSettings_() {
       document.getElementById('destination-folder').value = state.settings.destinationFolderId || '';
       document.getElementById('template-spreadsheet').value = state.settings.templateSpreadsheetId || '';
-      document.getElementById('registry-spreadsheet').value = state.settings.registrySpreadsheetId || '';
     }
 
     function saveSettings_() {
       var destination = document.getElementById('destination-folder').value.trim();
       var template = document.getElementById('template-spreadsheet').value.trim();
-      var registry = document.getElementById('registry-spreadsheet').value.trim();
       if (!destination || !template) {
         setFeedback_('settings-feedback', 'Complete the destination folder and template.', 'error');
         return;
@@ -897,14 +991,12 @@
       setFeedback_('settings-feedback', '', '');
       callServer_('saveAppSettings', {
         destinationFolderId: destination,
-        templateSpreadsheetId: template,
-        registrySpreadsheetId: registry
+        templateSpreadsheetId: template
       })
         .then(function(result) {
           state.settings = {
             destinationFolderId: result.destinationFolderId,
-            templateSpreadsheetId: result.templateSpreadsheetId,
-            registrySpreadsheetId: result.registrySpreadsheetId
+            templateSpreadsheetId: result.templateSpreadsheetId
           };
           state.settingsComplete = true;
           state.setupError = '';
@@ -912,7 +1004,7 @@
           updateSettingsWarning_();
           setFeedback_(
             'settings-feedback',
-            'Shared configuration saved. Registry: “' + result.registrySpreadsheetName + '”.',
+            'Shared configuration saved. The Case Registry uses Apps Script Properties.',
             'success'
           );
           return loadCases_().then(function() {
@@ -940,7 +1032,7 @@
 
     function showSuccess_(result) {
       document.getElementById('success-message').textContent =
-        '“' + result.caseName + '” was created with folders 01–04 and its Google Sheets file inside 01.';
+        '“' + result.caseName + '” was created and its Google Sheets file was placed inside 01 Input Data.';
       document.getElementById('open-spreadsheet-link').href = result.spreadsheetUrl;
       document.getElementById('open-folder-link').href = result.caseFolderUrl;
       document.getElementById('success-modal').classList.remove('hidden');

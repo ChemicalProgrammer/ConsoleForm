@@ -37,7 +37,7 @@ function createCase(payload) {
 
     var generatedFile = createSpreadsheetFromTemplate_(
       settings.templateSpreadsheetId,
-      structure.numberedFolders['01'],
+      structure.inputFolder,
       normalized
     );
 

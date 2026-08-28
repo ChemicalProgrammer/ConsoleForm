@@ -27,9 +27,13 @@ function runProjectSelfTest() {
   );
   assertTest_(sectionCFields.length === 15, 'Section C must define 15 characteristics.', errors);
   assertTest_(sectionDFields.length === 11, 'Section D must define 11 parameters.', errors);
-  assertTest_(APP_CONFIG.numberedFolders.join(',') === '01,02,03,04', 'The folder structure must contain 01–04.', errors);
+  assertTest_(
+    APP_CONFIG.numberedFolders.join(',') === '01 Input Data,02,03,04',
+    'The folder structure must contain 01 Input Data and folders 02–04.',
+    errors
+  );
   assertTest_(APP_CONFIG.appName === 'Case Console', 'The application must open as Case Console.', errors);
-  assertTest_(Boolean(APP_CONFIG.registrySheetName), 'A registry sheet name is required.', errors);
+  assertTest_(Boolean(APP_CONFIG.registryRecordPrefix), 'A Script Properties registry prefix is required.', errors);
   assertTest_(Boolean(APP_CONFIG.metadataSheetName), 'A case metadata sheet name is required.', errors);
   assertTest_(
     CASE_REGISTRY_COLUMNS.map(function(column) { return column.header; }).join(',') ===
@@ -44,6 +48,7 @@ function runProjectSelfTest() {
   );
   validateTemplateMappingForTest_(errors);
   validateTitleOnlySubmissionForTest_(errors);
+  validateOtherComponentForTest_(errors);
 
   var componentCodes = {};
   COMPONENT_DATABASE.forEach(function(component) {
@@ -78,6 +83,22 @@ function runProjectSelfTest() {
 
   console.log(JSON.stringify(result, null, 2));
   return result;
+}
+
+function validateOtherComponentForTest_(errors) {
+  var normalized = validateComponents_([{
+    code: 'CUSTOM-01',
+    name: 'Custom component',
+    percentage: '12.5',
+    isCustom: true,
+    characteristics: { C1: 'Manual value', C2: '42' }
+  }]);
+
+  assertTest_(normalized.length === 1, 'An Other component must be retained.', errors);
+  assertTest_(normalized[0].isCustom === true, 'An Other component must remain editable.', errors);
+  assertTest_(normalized[0].code === 'CUSTOM-01', 'The custom code must be retained.', errors);
+  assertTest_(normalized[0].name === 'Custom component', 'The custom name must be retained.', errors);
+  assertTest_(normalized[0].characteristics.C1 === 'Manual value', 'Manual characteristics must be retained.', errors);
 }
 
 function validateTitleOnlySubmissionForTest_(errors) {

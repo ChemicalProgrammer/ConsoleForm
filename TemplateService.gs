@@ -3,11 +3,52 @@
  * SHEET_TEMPLATE_MAPPING in TemplateMapping.gs.
  */
 function createSpreadsheetFromTemplate_(templateSpreadsheetId, outputFolder, data) {
-  var template = DriveApp.getFileById(templateSpreadsheetId);
   var outputName = data.caseName + APP_CONFIG.generatedFileSuffix;
-  var copy = template.makeCopy(outputName, outputFolder);
+  var copy;
+
+  try {
+    var created = Drive.Files.copy(
+      {
+        name: outputName,
+        parents: [outputFolder.getId()]
+      },
+      templateSpreadsheetId,
+      {
+        supportsAllDrives: true,
+        fields: 'id,name,parents'
+      }
+    );
+    if (
+      !created.parents ||
+      created.parents.indexOf(outputFolder.getId()) === -1
+    ) {
+      throw new Error('The copied spreadsheet was not created in 01 Input Data.');
+    }
+    copy = DriveApp.getFileById(created.id);
+  } catch (advancedError) {
+    try {
+      copy = DriveApp
+        .getFileById(templateSpreadsheetId)
+        .makeCopy(outputName, outputFolder);
+      assertFileInFolder_(copy.getId(), outputFolder.getId());
+    } catch (fallbackError) {
+      throw new Error(
+        'The Google Sheets template could not be copied into 01 Input Data. ' +
+        'Verify the Advanced Drive service and Shared Drive permissions.'
+      );
+    }
+  }
+
   writeCaseDataToSpreadsheet_(copy.getId(), data, { writeCreatedDate: true });
   return copy;
+}
+
+function assertFileInFolder_(fileId, folderId) {
+  var parents = DriveApp.getFileById(fileId).getParents();
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folderId) return;
+  }
+  throw new Error('The copied spreadsheet is outside 01 Input Data.');
 }
 
 /** Writes all editable Input Data fields to an existing case spreadsheet. */
@@ -76,10 +117,12 @@ function readCaseFromSpreadsheet_(spreadsheetId, fallbackCaseName) {
 
   var components = readSectionB_(spreadsheet);
   var characteristicSnapshots = readSectionC_(spreadsheet);
+  var database = getComponentMap_();
   components.forEach(function(component) {
-    if (characteristicSnapshots[component.code]) {
-      component.characteristics = characteristicSnapshots[component.code];
-    }
+    var snapshot = characteristicSnapshots[component.sourceRowIndex];
+    component.characteristics = snapshot ? snapshot.characteristics : {};
+    component.isCustom = isCustomComponentSnapshot_(component, database[component.code]);
+    delete component.sourceRowIndex;
   });
 
   var mappedCaseName = valueAsText_(readMappedCell_(
@@ -94,6 +137,18 @@ function readCaseFromSpreadsheet_(spreadsheetId, fallbackCaseName) {
     components: components,
     sectionD: sectionD
   };
+}
+
+function isCustomComponentSnapshot_(component, databaseComponent) {
+  if (!databaseComponent) return true;
+  if (String(component.name || '') !== String(databaseComponent.name || '')) return true;
+
+  return FORM_SCHEMA.sectionC.characteristics.some(function(characteristic) {
+    var liveValue = component.characteristics[characteristic.id];
+    var databaseValue = databaseComponent.characteristics[characteristic.id];
+    return String(liveValue == null ? '' : liveValue) !==
+      String(databaseValue == null ? '' : databaseValue);
+  });
 }
 
 function writeSectionB_(spreadsheet, components) {
@@ -138,7 +193,7 @@ function writeSectionC_(spreadsheet, components) {
       mapping.startRow,
       mapping.columns.characteristics[characteristic.id],
       components.map(function(item) {
-        return normalizeMappedValue_(item.characteristics[characteristic.id]);
+        return asSafeSheetValue_(item.characteristics[characteristic.id]);
       }),
       'sectionC.columns.characteristics.' + characteristic.id
     );
@@ -169,11 +224,13 @@ function readSectionB_(spreadsheet) {
 
   return codes.reduce(function(components, value, index) {
     var code = valueAsText_(value);
-    if (!code) return components;
+    var name = valueAsText_(names[index]);
+    if (!code && !name) return components;
     components.push({
       code: code,
-      name: valueAsText_(names[index]),
-      percentage: readMappedPercentage_(percentages[index], mapping.percentageAsDecimal)
+      name: name,
+      percentage: readMappedPercentage_(percentages[index], mapping.percentageAsDecimal),
+      sourceRowIndex: index
     });
     return components;
   }, []);
@@ -183,7 +240,8 @@ function readSectionC_(spreadsheet) {
   var mapping = SHEET_TEMPLATE_MAPPING.sectionC;
   var sheet = getMappedSheet_(spreadsheet, mapping.sheet, 'sectionC.sheet');
   var codes = readColumnValues_(sheet, mapping.startRow, mapping.columns.code, mapping.maxRows);
-  var snapshots = {};
+  var snapshots = [];
+  var names = readColumnValues_(sheet, mapping.startRow, mapping.columns.name, mapping.maxRows);
   var characteristicColumns = {};
 
   FORM_SCHEMA.sectionC.characteristics.forEach(function(characteristic) {
@@ -197,12 +255,17 @@ function readSectionC_(spreadsheet) {
 
   codes.forEach(function(value, index) {
     var code = valueAsText_(value);
-    if (!code) return;
+    var name = valueAsText_(names[index]);
+    if (!code && !name) return;
     var characteristics = {};
     FORM_SCHEMA.sectionC.characteristics.forEach(function(characteristic) {
       characteristics[characteristic.id] = characteristicColumns[characteristic.id][index];
     });
-    snapshots[code] = characteristics;
+    snapshots[index] = {
+      code: code,
+      name: name,
+      characteristics: characteristics
+    };
   });
   return snapshots;
 }
@@ -316,6 +379,14 @@ function valueAsOptionalNumber_(value) {
 function asSafeSheetText_(value) {
   var text = String(value == null ? '' : value);
   return /^[=+\-@]/.test(text) ? "'" + text : text;
+}
+
+function asSafeSheetValue_(value) {
+  if (value == null) return '';
+  if (typeof value === 'number' || typeof value === 'boolean' || value instanceof Date) {
+    return value;
+  }
+  return asSafeSheetText_(value);
 }
 
 function isA1Cell_(value) {

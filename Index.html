@@ -23,8 +23,9 @@
       </div>
       <div class="topbar-actions">
         <span id="current-user" class="user-chip"></span>
-        <button id="settings-button" class="icon-button" type="button" aria-label="Open settings" title="Settings">
-          <span aria-hidden="true">⚙</span>
+        <button id="settings-button" class="settings-button" type="button" aria-label="Open settings" title="Settings">
+          <span class="button-icon" aria-hidden="true">⚙</span>
+          <span>Settings</span>
         </button>
       </div>
     </header>
@@ -90,7 +91,10 @@
       <section id="workspace-view" class="hidden">
         <section class="card workspace-header">
           <div class="workspace-title-row">
-            <button id="back-to-cases-button" class="back-button" type="button" aria-label="Back to cases">←</button>
+            <button id="back-to-cases-button" class="back-button" type="button" aria-label="Back to cases">
+              <span class="button-icon" aria-hidden="true">←</span>
+              <span>Back to cases</span>
+            </button>
             <div>
               <div id="workspace-kicker" class="section-kicker">Case workspace</div>
               <h2 id="workspace-title">New case</h2>
@@ -98,11 +102,11 @@
             </div>
           </div>
           <div id="workspace-actions" class="workspace-actions hidden">
-            <button id="reload-case-button" class="secondary-button" type="button">Reload from Sheet</button>
-            <a id="workspace-sheet-link" class="secondary-button link-button" href="#" target="_blank">Open Sheet</a>
-            <a id="workspace-folder-link" class="secondary-button link-button" href="#" target="_blank">Open folder</a>
-            <button id="rename-case-button" class="secondary-button" type="button">Rename</button>
-            <button id="trash-case-button" class="danger-button" type="button">Move to trash</button>
+            <button id="reload-case-button" class="action-button action-reload" type="button"><span class="button-icon" aria-hidden="true">↻</span> Reload from Sheet</button>
+            <a id="workspace-sheet-link" class="action-button action-sheet link-button" href="#" target="_blank"><span class="button-icon" aria-hidden="true">▦</span> Open Sheet</a>
+            <a id="workspace-folder-link" class="action-button action-folder link-button" href="#" target="_blank"><span class="button-icon" aria-hidden="true">▰</span> Open Folder</a>
+            <button id="rename-case-button" class="action-button action-rename" type="button"><span class="button-icon" aria-hidden="true">✎</span> Rename</button>
+            <button id="trash-case-button" class="action-button action-trash" type="button"><span class="button-icon" aria-hidden="true">⌫</span> Move to Trash</button>
           </div>
         </section>
 
@@ -170,7 +174,7 @@
                 </button>
               </div>
               <div class="component-table-head" aria-hidden="true">
-                <span>Code</span><span>Name</span><span>Percentage</span><span></span>
+                <span>Component</span><span>Code</span><span>Name</span><span>Percentage</span><span></span>
               </div>
               <div id="component-rows" class="component-rows"></div>
               <div class="percentage-summary">
@@ -196,7 +200,7 @@
               <div id="section-c-empty" class="empty-state">
                 <div class="empty-icon" aria-hidden="true">◫</div>
                 <strong>No components selected</strong>
-                <p>Select components in Section B to view their 15 characteristics.</p>
+            <p>Select components in Section B to view their characteristics. Other components can be edited here.</p>
               </div>
               <div id="characteristic-table-container" class="characteristic-table-shell hidden">
                 <table id="characteristic-table" class="characteristic-table">
@@ -273,12 +277,11 @@
           <div class="field-group full-width">
             <label class="field-label" for="template-spreadsheet">Google Sheets template <span class="required-mark">*</span></label>
             <input id="template-spreadsheet" class="text-input" type="text" autocomplete="off" placeholder="https://docs.google.com/spreadsheets/d/…">
-            <p class="field-help">A copy will be placed inside folder 01 of every case.</p>
+            <p class="field-help">A copy will be placed inside 01 Input Data for every case.</p>
           </div>
-          <div class="field-group full-width">
-            <label class="field-label" for="registry-spreadsheet">Case Registry spreadsheet</label>
-            <input id="registry-spreadsheet" class="text-input" type="text" autocomplete="off" placeholder="Leave blank to create it automatically">
-            <p class="field-help">Leave blank on the first setup. The console will create a registry in the destination folder.</p>
+          <div class="settings-storage-note">
+            <span class="button-icon" aria-hidden="true">◆</span>
+            <div><strong>Case Registry</strong><p>Project metadata is stored centrally in Apps Script Properties. No additional registry spreadsheet is required.</p></div>
           </div>
         </div>
         <div id="settings-feedback" class="inline-feedback hidden"></div>

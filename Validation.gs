@@ -62,26 +62,62 @@ function validateComponents_(items) {
   }
 
   var database = getComponentMap_();
-  var seen = {};
+  var otherIndex = 0;
 
   return items.reduce(function(normalized, item) {
-    var code = String((item && item.code) || '').trim();
+    item = item || {};
+    var requestedCode = String(item.code || '').trim();
+    var databaseComponent = database[requestedCode];
+    var isCustom = Boolean(item.isCustom) || !databaseComponent;
 
-    // Ignore the initial blank row, unknown codes, and duplicate rows.
-    if (!code || !database[code] || seen[code]) {
+    if (!isCustom && databaseComponent) {
+      normalized.push({
+        code: databaseComponent.code,
+        name: databaseComponent.name,
+        percentage: parseOptionalNumber_(item.percentage),
+        characteristics: JSON.parse(JSON.stringify(databaseComponent.characteristics)),
+        isCustom: false
+      });
       return normalized;
     }
 
-    var component = database[code];
-    seen[code] = true;
+    var name = String(item.name || '').trim();
+    var characteristics = normalizeCustomCharacteristics_(item.characteristics || {});
+    var hasCharacteristic = Object.keys(characteristics).some(function(key) {
+      return characteristics[key] !== '';
+    });
+    var hasPercentage = parseOptionalNumber_(item.percentage) != null;
+
+    // A completely untouched optional row is ignored.
+    if (!requestedCode && !name && !hasCharacteristic && !hasPercentage) {
+      return normalized;
+    }
+
+    otherIndex += 1;
     normalized.push({
-      code: component.code,
-      name: component.name,
+      code: requestedCode || ('OTHER-' + padNumber_(otherIndex, 3)),
+      name: name || 'Other component',
       percentage: parseOptionalNumber_(item.percentage),
-      characteristics: JSON.parse(JSON.stringify(component.characteristics))
+      characteristics: characteristics,
+      isCustom: true
     });
     return normalized;
   }, []);
+}
+
+function normalizeCustomCharacteristics_(values) {
+  var normalized = {};
+  FORM_SCHEMA.sectionC.characteristics.forEach(function(characteristic) {
+    var value = values[characteristic.id];
+    normalized[characteristic.id] = value == null ? '' : String(value).trim();
+  });
+  return normalized;
+}
+
+function padNumber_(value, length) {
+  var text = String(value);
+  while (text.length < length) text = '0' + text;
+  return text;
 }
 
 function validateSectionD_(answers) {

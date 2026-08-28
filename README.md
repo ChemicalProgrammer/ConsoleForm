@@ -3,8 +3,9 @@
 Case Console is a Google Apps Script web application for creating, viewing,
 editing, renaming, trashing, and restoring cases stored in a Shared Drive.
 
-Each case contains folders `01` through `04`. A Google Sheets template is copied
-into `01`, and the copied spreadsheet remains the source of truth for Input Data.
+Each case contains `01 Input Data` and folders `02` through `04`. A Google Sheets
+template is copied directly into `01 Input Data`, and the copied spreadsheet
+remains the source of truth for Input Data.
 
 ## Main workflow
 
@@ -15,7 +16,7 @@ into `01`, and the copied spreadsheet remains the source of truth for Input Data
 
    ```text
    Case name/
-   ├── 01/
+   ├── 01 Input Data/
    │   └── Case name - Form
    ├── 02/
    ├── 03/
@@ -31,27 +32,34 @@ into `01`, and the copied spreadsheet remains the source of truth for Input Data
    recoverable from the dashboard's **Trash** filter.
 9. **Output Data** is an empty workspace reserved for future report generators.
 
-## Shared application settings
+## Shared application settings and registry
 
 Settings are stored once with `ScriptProperties`; they are not repeated per
 user.
 
 - **Destination folder:** parent folder where all case folders are created.
 - **Google Sheets template:** master spreadsheet copied for every case.
-- **Case Registry spreadsheet:** metadata index used by the dashboard.
+The Case Registry no longer requires an additional Google Sheets file. Each
+record is stored as an independent JSON value in Apps Script `ScriptProperties`.
+The registry contains IDs, status, dates, and available user identities; form
+answers remain in each case spreadsheet.
 
-On the first setup, leave **Case Registry spreadsheet** blank. The application
-creates `Case Registry` inside the destination folder and stores its ID.
+When upgrading from version 2, the first dashboard load imports the previous
+`Case Registry` spreadsheet automatically. The old spreadsheet is retained as a
+backup and is no longer written by the console.
 
-The registry contains IDs, status, dates, and users. Form answers are not
-duplicated there; they remain in each case spreadsheet.
+## Other components
+
+Section B includes **Other** in the component selector. Selecting it unlocks an
+editable code and name. Section C then displays editable fields for all 15
+characteristics on that row. Predefined components remain read-only.
 
 ## Existing cases
 
 Use **Import existing cases** once after upgrading from the form-only version.
 The migration scans only the configured destination folder, finds a Google
-Sheets file inside each `01` folder, assigns a stable case ID, and adds a registry
-row. It does not overwrite mapped form cells.
+Sheets file inside `01 Input Data` (or the legacy `01` folder), assigns a stable
+case ID, and adds a registry record. It does not overwrite mapped form cells.
 
 ## Direct Google Sheets edits
 
@@ -67,9 +75,9 @@ silently overwriting a newer save made by another web-app user.
 
 | File | Responsibility |
 | --- | --- |
-| `Config.gs` | Application names, folder rules, registry names, and schema version. |
+| `Config.gs` | Application names, folder rules, registry keys, and schema version. |
 | `SettingsService.gs` | Shared Script Properties and setup validation. |
-| `CaseRegistry.gs` | Registry creation, reads, writes, and serialization. |
+| `CaseRegistry.gs` | Script Properties registry, legacy migration, reads, writes, and serialization. |
 | `CaseService.gs` | Create, open, update, rename, trash, restore, and migration operations. |
 | `DriveService.gs` | Folder structure, parent verification, Shared Drive trash/restore, and discovery. |
 | `FieldDefinitions.gs` | Section A, C, and D definitions. |

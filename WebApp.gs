@@ -30,6 +30,10 @@ function getBootstrapData() {
     appName: APP_CONFIG.appName,
     schema: getFormSchema(),
     components: getComponents(),
+    maxComponentRows: Math.min(
+      SHEET_TEMPLATE_MAPPING.sectionB.maxRows,
+      SHEET_TEMPLATE_MAPPING.sectionC.maxRows
+    ),
     settings: settings,
     settingsComplete: settingsComplete,
     setupError: setupError,

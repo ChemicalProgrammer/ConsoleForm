@@ -11,7 +11,8 @@ function createCaseFolderStructure_(destinationFolderId, caseName) {
 
   return {
     caseFolder: caseFolder,
-    numberedFolders: numberedFolders
+    numberedFolders: numberedFolders,
+    inputFolder: numberedFolders[APP_CONFIG.inputFolderName]
   };
 }
 
@@ -89,7 +90,13 @@ function findNumberedSubfolder_(caseFolder, folderName) {
 }
 
 function findCaseSpreadsheet_(caseFolder) {
-  var folder01 = findNumberedSubfolder_(caseFolder, '01');
+  var folder01 = findNumberedSubfolder_(caseFolder, APP_CONFIG.inputFolderName);
+  if (!folder01) {
+    (APP_CONFIG.legacyInputFolderNames || []).some(function(folderName) {
+      folder01 = findNumberedSubfolder_(caseFolder, folderName);
+      return Boolean(folder01);
+    });
+  }
   if (!folder01) return null;
 
   var files = folder01.getFilesByType(MimeType.GOOGLE_SHEETS);

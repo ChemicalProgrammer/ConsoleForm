@@ -76,11 +76,11 @@ var FORM_SCHEMA = Object.freeze({
   },
   sectionB: {
     title: 'B. Components',
-    description: 'Optionally add predefined components and percentages. The total does not block case creation.'
+    description: 'Select a predefined component or choose Other to enter a custom code and name. Percentages are optional.'
   },
   sectionC: {
     title: 'C. Component characteristics',
-    description: 'Characteristics are displayed automatically for the components selected in Section B.',
+    description: 'Predefined characteristics are read-only. Characteristics for Other components can be entered manually.',
     characteristics: [
       { id: 'C1', label: 'C1', unit: '-' },
       { id: 'C2', label: 'C2', unit: '-' },

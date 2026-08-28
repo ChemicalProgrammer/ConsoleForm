@@ -1,6 +1,6 @@
 /**
  * Returns the global application settings shared by every web-app user.
- * @return {{destinationFolderId:string, templateSpreadsheetId:string, registrySpreadsheetId:string}}
+ * @return {{destinationFolderId:string, templateSpreadsheetId:string}}
  */
 function getAppSettings() {
   migrateLegacyUserSettings_();
@@ -11,9 +11,6 @@ function getAppSettings() {
     ) || '',
     templateSpreadsheetId: properties.getProperty(
       APP_CONFIG.scriptPropertyKeys.templateSpreadsheetId
-    ) || '',
-    registrySpreadsheetId: properties.getProperty(
-      APP_CONFIG.scriptPropertyKeys.registrySpreadsheetId
     ) || ''
   };
 }
@@ -24,8 +21,8 @@ function getUserSettings() {
 }
 
 /**
- * Validates and saves global Drive configuration. If no registry spreadsheet
- * is supplied, one is created inside the destination folder.
+ * Validates and saves global Drive configuration. Case Registry records are
+ * stored in Script Properties, so no additional spreadsheet is required.
  * @param {Object} settings
  * @return {Object}
  */
@@ -33,50 +30,39 @@ function saveAppSettings(settings) {
   var lock = LockService.getScriptLock();
   lock.waitLock(APP_CONFIG.lockTimeoutMs);
   try {
-  settings = settings || {};
-  var destinationFolderId = extractDriveId_(settings.destinationFolderId);
-  var templateSpreadsheetId = extractDriveId_(settings.templateSpreadsheetId);
-  var registrySpreadsheetId = extractDriveId_(settings.registrySpreadsheetId);
+    settings = settings || {};
+    var destinationFolderId = extractDriveId_(settings.destinationFolderId);
+    var templateSpreadsheetId = extractDriveId_(settings.templateSpreadsheetId);
 
-  if (!destinationFolderId || !templateSpreadsheetId) {
-    throw new Error(
-      'Enter a valid destination folder and Google Sheets template. You may paste a complete URL or ID.'
+    if (!destinationFolderId || !templateSpreadsheetId) {
+      throw new Error(
+        'Enter a valid destination folder and Google Sheets template. You may paste a complete URL or ID.'
+      );
+    }
+
+    var folder = validateDestinationFolder_(destinationFolderId);
+    var template = validateGoogleSpreadsheetFile_(
+      templateSpreadsheetId,
+      'The template could not be opened. Check the ID and your permissions.'
     );
-  }
 
-  var folder = validateDestinationFolder_(destinationFolderId);
-  var template = validateGoogleSpreadsheetFile_(
-    templateSpreadsheetId,
-    'The template could not be opened. Check the ID and your permissions.'
-  );
+    var properties = PropertiesService.getScriptProperties();
+    var values = {};
+    values[APP_CONFIG.scriptPropertyKeys.destinationFolderId] = destinationFolderId;
+    values[APP_CONFIG.scriptPropertyKeys.templateSpreadsheetId] = templateSpreadsheetId;
+    properties.setProperties(values, false);
 
-  if (registrySpreadsheetId) {
-    validateGoogleSpreadsheetFile_(
-      registrySpreadsheetId,
-      'The case registry could not be opened. Check the ID and your permissions.'
-    );
-  } else {
-    registrySpreadsheetId = createRegistrySpreadsheet_(destinationFolderId);
-  }
+    // Imports the previous Sheets registry once when upgrading from v2.
+    migrateLegacySheetRegistryIfNeeded_();
 
-  initializeRegistry_(registrySpreadsheetId);
-
-  var properties = PropertiesService.getScriptProperties();
-  var values = {};
-  values[APP_CONFIG.scriptPropertyKeys.destinationFolderId] = destinationFolderId;
-  values[APP_CONFIG.scriptPropertyKeys.templateSpreadsheetId] = templateSpreadsheetId;
-  values[APP_CONFIG.scriptPropertyKeys.registrySpreadsheetId] = registrySpreadsheetId;
-  properties.setProperties(values, false);
-
-  return {
-    ok: true,
-    destinationFolderId: destinationFolderId,
-    destinationFolderName: folder.getName(),
-    templateSpreadsheetId: templateSpreadsheetId,
-    templateSpreadsheetName: template.getName(),
-    registrySpreadsheetId: registrySpreadsheetId,
-    registrySpreadsheetName: DriveApp.getFileById(registrySpreadsheetId).getName()
-  };
+    return {
+      ok: true,
+      destinationFolderId: destinationFolderId,
+      destinationFolderName: folder.getName(),
+      templateSpreadsheetId: templateSpreadsheetId,
+      templateSpreadsheetName: template.getName(),
+      registryStorage: 'Script Properties'
+    };
   } finally {
     lock.releaseLock();
   }
@@ -91,8 +77,7 @@ function areSettingsComplete_() {
   var settings = getAppSettings();
   return Boolean(
     settings.destinationFolderId &&
-    settings.templateSpreadsheetId &&
-    settings.registrySpreadsheetId
+    settings.templateSpreadsheetId
   );
 }
 
@@ -100,11 +85,10 @@ function getValidatedSettings_() {
   var settings = getAppSettings();
   if (
     !settings.destinationFolderId ||
-    !settings.templateSpreadsheetId ||
-    !settings.registrySpreadsheetId
+    !settings.templateSpreadsheetId
   ) {
     throw new Error(
-      'Configure the destination folder, template, and case registry before using the console.'
+      'Configure the destination folder and template before using the console.'
     );
   }
 
@@ -113,11 +97,7 @@ function getValidatedSettings_() {
     settings.templateSpreadsheetId,
     'The saved Google Sheets template is no longer accessible.'
   );
-  validateGoogleSpreadsheetFile_(
-    settings.registrySpreadsheetId,
-    'The saved case registry is no longer accessible.'
-  );
-  initializeRegistry_(settings.registrySpreadsheetId);
+  migrateLegacySheetRegistryIfNeeded_();
   return settings;
 }
 
@@ -147,7 +127,7 @@ function validateGoogleSpreadsheetFile_(fileId, inaccessibleMessage) {
 
 /**
  * Copies destination/template values from the previous per-user installation
- * into global properties once. The registry is created later from Settings.
+ * into global properties once.
  */
 function migrateLegacyUserSettings_() {
   var scriptProperties = PropertiesService.getScriptProperties();
