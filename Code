@@ -1,11 +1,5 @@
-function writeSectionC_(spreadsheet, components) {
+function readSectionC_(spreadsheet) {
   var mapping = SHEET_TEMPLATE_MAPPING.sectionC;
-
-  assertRowCapacity_(components.length, mapping, 'C');
-
-  if (!components.length) {
-    return;
-  }
 
   var sheet = getMappedSheet_(
     spreadsheet,
@@ -13,34 +7,44 @@ function writeSectionC_(spreadsheet, components) {
     'sectionC.sheet'
   );
 
-  // Only the component name is written.
-  writeColumnValues_(
-    sheet,
-    mapping.startRow,
-    mapping.columns.name,
-    components.map(function(item) {
-      return asSafeSheetText_(item.name);
-    }),
-    'sectionC.columns.name'
-  );
+  var characteristicColumns = {};
 
-  // Write C1–C15.
   FORM_SCHEMA.sectionC.characteristics.forEach(
     function(characteristic) {
-      writeColumnValues_(
-        sheet,
-        mapping.startRow,
-        mapping.columns.characteristics[
-          characteristic.id
-        ],
-        components.map(function(item) {
-          return asSafeSheetValue_(
-            item.characteristics[characteristic.id]
-          );
-        }),
-        'sectionC.columns.characteristics.' +
-          characteristic.id
-      );
+      characteristicColumns[characteristic.id] =
+        readColumnValues_(
+          sheet,
+          mapping.startRow,
+          mapping.columns.characteristics[
+            characteristic.id
+          ],
+          mapping.maxRows
+        );
     }
   );
+
+  var snapshots = [];
+
+  for (
+    var rowIndex = 0;
+    rowIndex < mapping.maxRows;
+    rowIndex += 1
+  ) {
+    var characteristics = {};
+
+    FORM_SCHEMA.sectionC.characteristics.forEach(
+      function(characteristic) {
+        characteristics[characteristic.id] =
+          characteristicColumns[
+            characteristic.id
+          ][rowIndex];
+      }
+    );
+
+    snapshots[rowIndex] = {
+      characteristics: characteristics
+    };
+  }
+
+  return snapshots;
 }
